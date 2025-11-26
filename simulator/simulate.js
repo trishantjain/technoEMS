@@ -10,6 +10,8 @@ let csvData = [];
 let currentSecond = 0;
 let isCSVMode = true;
 
+// 🔥 PRE-INDEXING: Fast lookup structure
+let csvDataBySecond = new Map(); // { second → [row1, row2, ...] }
 
 const connectedDevices = new Map();
 
@@ -36,7 +38,7 @@ function readCSV(filePath) {
         Object.keys(row).forEach(key => {
           cleanedRow[key] = typeof row[key] === 'string' ? row[key].trim() : row[key];
         });
-        results.push(row);
+        results.push(cleanedRow);
       })
       .on('end', () => {
         resolve(results);
@@ -53,6 +55,31 @@ function readCSV(filePath) {
 //     parseInt(row.seconds) === second && row.mac === mac
 //   );
 // }
+
+function preIndexCSVData() {
+  console.log('⚡ Pre-indexing CSV data...');
+
+  csvDataBySecond.clear(); // Clear any existing data
+
+  // Index by SECOND (for dispatcher)
+  csvData.forEach(row => {
+    const second = parseInt(row.seconds);
+    if (!csvDataBySecond.has(second)) {
+      csvDataBySecond.set(second, []);
+    }
+    csvDataBySecond.get(second).push(row);
+  });
+
+  console.log(`⚡ Indexed ${csvDataBySecond.size} seconds`);
+
+  // Debug: Show index statistics
+  console.log('📊 Index Statistics:');
+  const secondsWithData = Array.from(csvDataBySecond.keys()).sort((a, b) => a - b);
+  const maxDataInSecond = Math.max(...Array.from(csvDataBySecond.values()).map(arr => arr.length));
+  console.log(`   Seconds range: ${secondsWithData[0]} to ${secondsWithData[secondsWithData.length - 1]}`);
+  console.log(`   Most data in one second: ${maxDataInSecond}`);
+}
+
 
 function sendPacketForRow(client, row, mac, index) {
   const insideTemp = parseFloat(row.inside_temp) || (35 + Math.random() * 3);
@@ -126,7 +153,7 @@ function sendPacketForRow(client, row, mac, index) {
 
 function startDevice(mac, index) {
   try {
-    const client = net.createConnection({ host: 'localhost', port: 4000 });
+    const client = net.createConnection({ host: '127.0.0.1', port: 4000 });
 
     // 🔧 NEW: Store this device in our connected devices map
     connectedDevices.set(mac, client);
@@ -275,118 +302,118 @@ function startDevice(mac, index) {
   }
 }
 
+/*
+function startDevice(mac, index) {
+  try {
+    const client = net.createConnection({ host: 'localhost', port: 4000 });
+    client.on('connect', () => {
+      console.log(`✅ Connected as ${mac}`);
 
-// function startDevice(mac, index) {
-//   try {
-//     const client = net.createConnection({ host: 'localhost', port: 4000 });
-//     client.on('connect', () => {
-//       console.log(`✅ Connected as ${mac}`);
+      if (isCSVMode && csvData.length > 0) {
+        console.log(`📄 ${mac} starting in CSV mode`);
 
-//       if (isCSVMode && csvData.length > 0) {
-//         console.log(`📄 ${mac} starting in CSV mode`);
+        // Get ALL data for this specific device and sort by seconds
+        const deviceData = csvData
+          .filter(row => row.mac === mac)
+          .sort((a, b) => parseInt(a.seconds) - parseInt(b.seconds));
 
-//         // Get ALL data for this specific device and sort by seconds
-//         const deviceData = csvData
-//           .filter(row => row.mac === mac)
-//           .sort((a, b) => parseInt(a.seconds) - parseInt(b.seconds));
+        console.log(`📊 ${mac} has ${deviceData.length} data points`);
 
-//         console.log(`📊 ${mac} has ${deviceData.length} data points`);
+        if (deviceData.length === 0) {
+          console.log(`❌ No CSV data for ${mac}, switching to random mode`);
+          isCSVMode = false;
+          client.end();
+          setTimeout(() => startDevice(mac, index), 1000);
+          return;
+        }
 
-//         if (deviceData.length === 0) {
-//           console.log(`❌ No CSV data for ${mac}, switching to random mode`);
-//           isCSVMode = false;
-//           client.end();
-//           setTimeout(() => startDevice(mac, index), 1000);
-//           return;
-//         }
+        let dataIndex = 0;
 
-//         let dataIndex = 0;
+        const interval = setInterval(() => {
+          if (dataIndex >= deviceData.length) {
+            console.log(`📄 CSV data completed for ${mac}! Switching to random mode...`);
+            clearInterval(interval);
+            isCSVMode = false;
+            client.end();
+            setTimeout(() => startDevice(mac, index), 1000);
+            return;
+          }
 
-//         const interval = setInterval(() => {
-//           if (dataIndex >= deviceData.length) {
-//             console.log(`📄 CSV data completed for ${mac}! Switching to random mode...`);
-//             clearInterval(interval);
-//             isCSVMode = false;
-//             client.end();
-//             setTimeout(() => startDevice(mac, index), 1000);
-//             return;
-//           }
+          const row = deviceData[dataIndex];
+          console.log(`⏰ [${mac}] Processing second ${row.seconds} (${dataIndex + 1}/${deviceData.length})`);
 
-//           const row = deviceData[dataIndex];
-//           console.log(`⏰ [${mac}] Processing second ${row.seconds} (${dataIndex + 1}/${deviceData.length})`);
+          sendPacketForRow(client, row, mac, index);
+          dataIndex++;
 
-//           sendPacketForRow(client, row, mac, index);
-//           dataIndex++;
+        }, 2000);
+      } else {
+        console.log(`🔄 ${mac} starting in random mode`);
+        console.log(`🔄 ${mac} starting in random mode`);
 
-//         }, 2000);
-//       } else {
-//         console.log(`🔄 ${mac} starting in random mode`);
-//         console.log(`🔄 ${mac} starting in random mode`);
+        let sendCount = 0;
+        const isHealthyDevice = index >= TOTAL_DEVICES - 2;
+        const isDisconnectedSim = index >= TOTAL_DEVICES - 5 && index < TOTAL_DEVICES - 2;
 
-//         let sendCount = 0;
-//         const isHealthyDevice = index >= TOTAL_DEVICES - 2;
-//         const isDisconnectedSim = index >= TOTAL_DEVICES - 5 && index < TOTAL_DEVICES - 2;
+        let alarmStart = 5 + Math.floor(Math.random() * 5);
+        let alarmDuration = 2 + Math.floor(Math.random() * 2);
+        let inAlarmPhase = false;
 
-//         let alarmStart = 5 + Math.floor(Math.random() * 5);
-//         let alarmDuration = 2 + Math.floor(Math.random() * 2);
-//         let inAlarmPhase = false;
+        const interval = setInterval(() => {
+          sendCount++;
 
-//         const interval = setInterval(() => {
-//           sendCount++;
+          // Disconnection Simulation
+          if (isDisconnectedSim && sendCount >= 3) {
+            console.log(`❌ [${mac}] Disconnecting after ${sendCount} packets`);
+            clearInterval(interval);
+            client.end();
 
-//           // Disconnection Simulation
-//           if (isDisconnectedSim && sendCount >= 3) {
-//             console.log(`❌ [${mac}] Disconnecting after ${sendCount} packets`);
-//             clearInterval(interval);
-//             client.end();
+            const reconnectDelay = 10000 + Math.random() * 10000;
+            console.log(`🔄 [${mac}] Will reconnect in ${(reconnectDelay / 1000).toFixed(1)}s`);
+            setTimeout(() => startDevice(mac, index), reconnectDelay);
+            return;
+          }
 
-//             const reconnectDelay = 10000 + Math.random() * 10000;
-//             console.log(`🔄 [${mac}] Will reconnect in ${(reconnectDelay / 1000).toFixed(1)}s`);
-//             setTimeout(() => startDevice(mac, index), reconnectDelay);
-//             return;
-//           }
+          // Toggle alarm phase
+          if (isHealthyDevice) {
+            if (sendCount >= alarmStart && sendCount < alarmStart + alarmDuration) {
+              inAlarmPhase = true;
+            } else {
+              inAlarmPhase = false;
+            }
 
-//           // Toggle alarm phase
-//           if (isHealthyDevice) {
-//             if (sendCount >= alarmStart && sendCount < alarmStart + alarmDuration) {
-//               inAlarmPhase = true;
-//             } else {
-//               inAlarmPhase = false;
-//             }
+            if (sendCount >= alarmStart + alarmDuration) {
+              alarmStart = sendCount + 5 + Math.floor(Math.random() * 5);
+              alarmDuration = 2 + Math.floor(Math.random() * 2);
+            }
+          }
 
-//             if (sendCount >= alarmStart + alarmDuration) {
-//               alarmStart = sendCount + 5 + Math.floor(Math.random() * 5);
-//               alarmDuration = 2 + Math.floor(Math.random() * 2);
-//             }
-//           }
+          // Your existing random data generation code here...
+          const triggerAlarm = !isHealthyDevice || inAlarmPhase;
 
-//           // Your existing random data generation code here...
-//           const triggerAlarm = !isHealthyDevice || inAlarmPhase;
+          // ... (keep all your random sensor data generation code)
 
-//           // ... (keep all your random sensor data generation code)
+          const status = isDisconnectedSim && sendCount >= 3 ? '❌ DISCONNECTED' : triggerAlarm ? '🚨 ALARM' : '✅ NORMAL';
+          console.log(`[${mac}] ${status} | Packet #${sendCount}`);
+          // client.write(packet); // Your existing packet sending
 
-//           const status = isDisconnectedSim && sendCount >= 3 ? '❌ DISCONNECTED' : triggerAlarm ? '🚨 ALARM' : '✅ NORMAL';
-//           console.log(`[${mac}] ${status} | Packet #${sendCount}`);
-//           // client.write(packet); // Your existing packet sending
+        }, 2000);
 
-//         }, 2000);
+      }
+    });
 
-//       }
-//     });
+    client.on('error', (err) => {
+      console.error(`${mac} connection error:`, err);
+    });
 
-//     client.on('error', (err) => {
-//       console.error(`${mac} connection error:`, err);
-//     });
+    client.on('close', () => {
+      console.warn(`${mac} connection closed`);
+    });
 
-//     client.on('close', () => {
-//       console.warn(`${mac} connection closed`);
-//     });
-
-//   } catch (err) {
-//     console.error(`Error in startDevice for ${mac}:`, err);
-//   }
-// }
-
+  } catch (err) {
+    console.error(`Error in startDevice for ${mac}:`, err);
+  }
+}
+*/
 
 // 🔧 NEW: Central Data Dispatcher
 function startDataDispatcher() {
@@ -396,9 +423,8 @@ function startDataDispatcher() {
     console.log(`\n🕒 === DISPATCHING SECOND ${currentSecond} ===`);
 
     // data for current second (any MAC)
-    const allDataThisSecond = csvData.filter(row =>
-      parseInt(row.seconds) === currentSecond
-    );
+    const allDataThisSecond = csvDataBySecond.get(currentSecond) || [];
+
 
     console.log(`📊 Found ${allDataThisSecond.length} data entries for second ${currentSecond}`);
 
@@ -452,7 +478,9 @@ function startDataDispatcher() {
 async function initializeSimulator() {
   try {
     console.log('📄 Attempting to load CSV data...');
-    csvData = await readCSV('D:/TechnoTrendz/simulator/sim_pack.csv');
+    csvData = await readCSV('./sim_pack.csv');
+
+    preIndexCSVData();
 
     // 🔍 Debug: Analyze CSV data
     const uniqueMACs = [...new Set(csvData.map(row => row.mac))];
@@ -460,7 +488,7 @@ async function initializeSimulator() {
     console.log(`   Total rows: ${csvData.length}`);
     console.log(`   Unique MACs: ${uniqueMACs.length}`);
     console.log(`   MACs in CSV: ${uniqueMACs.join(', ')}`);
-    
+
     // Show seconds distribution
     const secondsSample = [...new Set(csvData.map(row => parseInt(row.seconds)))].sort((a, b) => a - b).slice(0, 10);
     console.log(`   First 10 seconds: [${secondsSample.join(', ')}]`);
@@ -500,57 +528,17 @@ process.on('SIGINT', () => {
 });
 
 
-
-// initialzieSimulator();
-
-// // 🔧 ADDED: Command line interface help display
-// function showControls() {
-//   console.log('\n🧪 ===== SIMULATOR CONTROLS =====');
-//   console.log('a - Activate GLOBAL ALARM mode (all devices in alarm)');
-//   console.log('n - Activate NORMAL mode (default behavior)');
-//   console.log('p - PAUSE/RESUME all devices');
-//   console.log('s - Show current status');
-//   console.log('q - Quit simulator');
-//   console.log('================================\n');
-// }
-
-// // 🔧 ADDED: Handle user input for controls
-// rl.on('line', (input) => {
-//   switch (input.trim().toLowerCase()) {
-//     case 'a':
-//       setGlobalAlarmMode(true);
-//       break;
-//     case 'n':
-//       setGlobalAlarmMode(false);
-//       break;
-//     case 'p':
-//       togglePause();
-//       break;
-//     case 's':
-//       console.log(`🧪 Status: ${simulatorPaused ? 'PAUSED' : 'RUNNING'} | Alarm Mode: ${globalAlarmMode ? 'ACTIVE' : 'NORMAL'}`);
-//       break;
-//     case 'q':
-//       console.log('🛑 Stopping simulator...');
-//       process.exit(0);
-//       break;
-//     case 'h':
-//       showControls();
-//       break;
-//     default:
-//       console.log('❌ Unknown command. Press "h" for help.');
-//   }
-// });
-
-// Start all devices
-// let index = 0;
-// const spawnInterval = setInterval(() => {
-//   if (index >= TOTAL_DEVICES) {
-//     clearInterval(spawnInterval);
-//     console.log('✅ All simulated devices started.');
-//     return;
-//   }
-//   const mac = generateMac(index);
-//   startDevice(mac, index);
-//   devices.push(mac);
-//   index++;
-// }, 10);
+/* // Start all devices
+let index = 0;
+const spawnInterval = setInterval(() => {
+  if (index >= TOTAL_DEVICES) {
+    clearInterval(spawnInterval);
+    console.log('✅ All simulated devices started.');
+    return;
+  }
+  const mac = generateMac(index);
+  startDevice(mac, index);
+  devices.push(mac);
+  index++;
+}, 10);
+ */

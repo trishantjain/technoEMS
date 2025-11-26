@@ -5,7 +5,7 @@ module.exports = {
   },
   outsideTemperature: {
     min: -20,
-    max: 85
+    max: 60
   },
   humidity: {
     min: 10,

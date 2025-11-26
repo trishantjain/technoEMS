@@ -11,7 +11,8 @@ const SensorReading = require("./models/SensorReading");
 const thresholds = require("./thresholds");
 const fs = require("fs");
 const path = require("path");
-const axios = require('axios')
+const axios = require('axios');
+const WebSocket = require('ws');
 
 const app = express();
 const connectedDevices = new Map();
@@ -19,9 +20,85 @@ app.use(bodyParser.json());
 const cors = require("cors");
 app.use(cors());
 
+// WebSocket Server
+const wss = new WebSocket.Server({ port: 8080 });
+const wsClients = new Set();
+
+// WebSocket connection handling with improved logging
+wss.on('connection', (ws, req) => {
+  console.log('🔌 WebSocket client connected from:', req.socket.remoteAddress);
+  wsClients.add(ws);
+
+  // Send immediate welcome message
+  ws.send(JSON.stringify({
+    type: 'CONNECTED',
+    message: 'WebSocket connected successfully',
+    timestamp: getFormattedDateTime(),
+    clientsCount: wsClients.size
+  }));
+
+  // Send current connected devices status
+  ws.send(JSON.stringify({
+    type: 'DEVICES_STATUS',
+    data: {
+      connectedDevices: Array.from(connectedDevices.keys()),
+      timestamp: getFormattedDateTime()
+    }
+  }));
+
+  ws.on('close', () => {
+    console.log('🔌 WebSocket client disconnected');
+    wsClients.delete(ws);
+  });
+
+  ws.on('error', (err) => {
+    console.error('WebSocket error:', err);
+    wsClients.delete(ws);
+  });
+});
+
+wss.on('listening', () => {
+  console.log('✅ WebSocket server running on port 8080');
+});
+
+// Improved WebSocket broadcast function
+function broadcastToWebClients(reading) {
+  const message = JSON.stringify({
+    type: 'NEW_READING',
+    data: reading,
+    timestamp: getFormattedDateTime()
+  });
+
+  let successfulSends = 0;
+  let failedSends = 0;
+
+  wsClients.forEach((client) => {
+    if (client.readyState === WebSocket.OPEN) {
+      try {
+        client.send(message);
+        successfulSends++;
+      } catch (err) {
+        console.error('Failed to send to WebSocket client:', err);
+        failedSends++;
+        wsClients.delete(client);
+      }
+    }
+  });
+
+  // Log broadcasting stats occasionally
+  if (Math.random() < 0.01) { // ~1% of the time
+    console.log(`📊 WebSocket: ${successfulSends} sent, ${failedSends} failed, ${wsClients.size} total clients`);
+  }
+}
+
+// WebSocket status monitoring
+setInterval(() => {
+  if (wsClients.size > 0) {
+    console.log(`🔌 WebSocket Status: ${wsClients.size} active clients`);
+  }
+}, 30000); // Every 30 seconds
 
 // ===================== DEBUG SYSTEM =====================
-
 const debug = {
   enabled: true,
   lastPacketTime: null,
@@ -33,21 +110,18 @@ const debug = {
     malformedPackets: 0
   },
 
-  // Loging timestamp and context message
   log: (message, context = '') => {
     if (!debug.enabled) return;
     const timestamp = getFormattedDateTime();
-    console.log(`🔍 [${timestamp}] ${message}`, context ? `| ${context}` : '')
+    console.log(`🔍 [${timestamp}] ${message}`, context ? `| ${context}` : '');
   },
 
-  // Error Logging
   error: (message, error = null) => {
     const timestamp = getFormattedDateTime();
-    console.log(`❌ [${timestamp}] ${message}`, error ? `| Error: ${error.message}` : '')
+    console.log(`❌ [${timestamp}] ${message}`, error ? `| Error: ${error.message}` : '');
     debug.errorCount++;
   },
 
-  // Stats
   stats: () => {
     const now = new Date();
     const uptime = process.uptime();
@@ -60,6 +134,7 @@ const debug = {
       bufferStats: debug.bufferStats,
       connectedDevices: connectedDevices.size,
       readingBufferSize: readingBuffer.length,
+      websocketClients: wsClients.size,
       dateFunction: "getFormattedDateTime() working ✅"
     };
     console.log('📊 DEBUG STATS:', JSON.stringify(stats, null, 2));
@@ -94,17 +169,13 @@ const debug = {
   }
 };
 
-
 // 🔌 DB connection
 mongoose
   .connect(process.env.MONGO_URI)
   .then(() => console.log("MongoDB connected"))
   .catch((err) => console.error("MongoDB connection error:", err.message));
 
-
-
-
-// ===================== HTTP API Endpoints (unchanged) =====================
+// ===================== HTTP API Endpoints =====================
 app.get("/ping", async (req, res) => {
   try {
     await mongoose.connection.db.admin().ping();
@@ -114,6 +185,29 @@ app.get("/ping", async (req, res) => {
     res.status(500).send("MongoDB unreachable");
   }
 });
+
+// WebSocket test endpoint
+app.get("/api/websocket-test", (req, res) => {
+  const wsStatus = {
+    websocketServer: {
+      port: 8080,
+      clients: wsClients.size,
+      status: 'RUNNING'
+    },
+    httpServer: {
+      port: 5000,
+      status: 'RUNNING'
+    },
+    tcpServer: {
+      port: 4000,
+      status: 'RUNNING'
+    },
+    timestamp: getFormattedDateTime()
+  };
+
+  res.json(wsStatus);
+});
+
 // ✅ Login route (admin hardcoded via .env)
 app.post("/api/login", async (req, res) => {
   const { username, password } = req.body;
@@ -144,7 +238,7 @@ app.post("/api/login", async (req, res) => {
     { expiresIn: "2h" }
   );
 
-  res.json({ role: user.role, token }); // ✅ return role and token
+  res.json({ role: user.role, token });
 });
 
 // ✅ Register new user
@@ -156,7 +250,7 @@ app.post("/api/register-user", async (req, res) => {
   }
 
   try {
-    const hashedPassword = await bcrypt.hash(password, 10); // ✅ hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
     const user = new User({
       username: username.toLowerCase(),
       password: hashedPassword,
@@ -183,10 +277,8 @@ app.get("/api/users", async (req, res) => {
 app.post("/api/register-device", async (req, res) => {
   const { mac, locationId, address, latitude, longitude, ipCamera } = req.body;
   try {
-    const normalizedMac = mac.toLowerCase(); //! Converting to LowerCase()
-
     const device = new Device({
-      mac: normalizedMac, //! Converting to LowerCase()
+      mac,
       locationId,
       address,
       latitude,
@@ -203,13 +295,8 @@ app.post("/api/register-device", async (req, res) => {
 // ✅ Get registered device metadata
 app.get("/api/devices-info", async (req, res) => {
   try {
-    const devices = await Device.find().sort({locationId: -1}); // includes ipCamera
-    /* NEW ADDED */
-    const normalizedDevices = devices.map(device => ({
-      ...device._doc,
-      mac: device.mac.toLowerCase() //! Converting to LowerCase()
-    }));
-    res.json(normalizedDevices); //! Converting to LowerCase()
+    const devices = await Device.find();
+    res.json(devices);
   } catch (err) {
     res.status(500).json({ error: "Error fetching devices" });
   }
@@ -218,8 +305,6 @@ app.get("/api/devices-info", async (req, res) => {
 // ✅ Delete device by MAC
 app.put("/api/device/:mac", async (req, res) => {
   try {
-    /* NEW ADDED*/
-    const mac = req.params.mac.toLowerCase(); //! Converting to LowerCase()
     const { password, ...updateFields } = req.body;
     if (updateFields.locationId && updateFields.locationId.length > 17)
       return res
@@ -229,7 +314,7 @@ app.put("/api/device/:mac", async (req, res) => {
       return res
         .status(403)
         .json({ error: "Unauthorized: Invalid admin password" });
-    // const { mac } = req.params;
+    const { mac } = req.params;
     const updatedDevice = await Device.findOneAndUpdate(
       { mac },
       { $set: updateFields },
@@ -246,9 +331,6 @@ app.put("/api/device/:mac", async (req, res) => {
 
 app.post("/api/device/delete/:mac", async (req, res) => {
   const { password } = req.body;
-  /* NEW ADDED*/
-  const mac = req.params.mac.toLowerCase(); //! Converting to LowerCase()
-
   if (password !== process.env.ADMIN_PASSWORD)
     return res
       .status(403)
@@ -301,7 +383,6 @@ app.put("/api/user/:id", async (req, res) => {
 // ✅ Delete User
 app.post("/api/user/delete/:id", async (req, res) => {
   try {
-
     const { adminPassword, uname } = req.body;
 
     console.log("Admin Password: ", adminPassword);
@@ -316,8 +397,6 @@ app.post("/api/user/delete/:id", async (req, res) => {
     if (result.deletedCount === 0)
       return res.status(404).json({ error: "User not found" });
     res.json({ message: "User deleted successfully" });
-
-
   } catch (error) {
     console.error("Error updating User:", error);
     res.status(500).json({ error: "Server error while updating device" });
@@ -327,37 +406,36 @@ app.post("/api/user/delete/:id", async (req, res) => {
 // ✅ Command endpoint
 app.post("/command", (req, res) => {
   const { mac, command } = req.body;
-  const normalizedMac = mac.toLowerCase(); //! Converting to LowerCase()
-  const deviceSocket = connectedDevices.get(normalizedMac);
+  const deviceSocket = connectedDevices.get(mac);
 
   if (!deviceSocket || deviceSocket.destroyed) {
-    connectedDevices.delete(normalizedMac);
-    return res.status(404).json({ message: `Device ${normalizedMac} not connected` });
+    connectedDevices.delete(mac);
+    return res.status(404).json({ message: `Device ${mac} not connected` });
   }
 
   const buffer = Buffer.from(command, "utf-8");
   deviceSocket.write(buffer, (err) => {
     if (err) {
-      console.error(`Failed to send command to ${normalizedMac}:`, err.message);
+      console.error(`Failed to send command to ${mac}:`, err.message);
       return res
         .status(500)
-        .json({ message: `Error sending command to ${normalizedMac}` });
+        .json({ message: `Error sending command to ${mac}` });
     }
-    console.log(`Sent command "${command}" to ${normalizedMac}`);
-    res.json({ message: `Command sent to ${normalizedMac}` });
+    console.log(`Sent command "${command}" to ${mac}`);
+    res.json({ message: `Command sent to ${mac}` });
   });
 });
 
 // ✅ Get connected MACs
 app.get("/api/devices", (req, res) => {
-  res.json(Array.from(connectedDevices.keys()).map(mac => mac.toLowerCase())); //! Converting to LowerCase()
+  res.json(Array.from(connectedDevices.keys()));
 });
 
 // ✅ Get only registered MACs
 app.get("/api/all-devices", async (req, res) => {
   try {
     const devices = await Device.find({}, "mac");
-    res.json(devices.map((d) => d.mac.toLowerCase())); //! Converting to LowerCase()
+    res.json(devices.map((d) => d.mac));
   } catch (error) {
     console.error("Error fetching registered devices:", error);
     res.status(500).json({ error: "Failed to fetch devices" });
@@ -380,8 +458,7 @@ app.get("/api/readings", async (req, res) => {
 // ✅ Get latest reading by MAC
 app.get("/api/device/:mac", async (req, res) => {
   try {
-    const normalizedMac = req.params.mac.toLowerCase(); //! Converting to LowerCase()
-    const latest = await SensorReading.findOne({ mac: normalizedMac }).sort({
+    const latest = await SensorReading.findOne({ mac: req.params.mac }).sort({
       timestamp: -1,
     });
     if (!latest) return res.status(404).json({ message: "No data found" });
@@ -412,10 +489,8 @@ app.post("/api/log-command", (req, res) => {
   const timestamp = now.toLocaleString();
   const logEntry = `[${timestamp}] | MAC:${mac} | ${status}  | COMMAND:"${command}" | MESSAGE:"${message}"\n`;
 
-  // ✅ Send response immediately, log in background
   res.json({ message: "Log received" });
 
-  // File writing happens after response
   fs.appendFile(filePath, logEntry, (err) => {
     if (err) {
       console.error("Failed to save log:", err);
@@ -429,7 +504,6 @@ app.get("/api/historical-data", async (req, res) => {
   const { mac, datetime } = req.query;
   if (!mac || !datetime)
     return res.status(400).json({ error: "Missing mac or datetime" });
-  const normalizedMac = mac.toLowerCase(); //! Converting to LowerCase()
   const datetimeObj = new Date(datetime);
   if (isNaN(datetimeObj.getTime()))
     return res.status(400).json({ error: "Invalid datetime format" });
@@ -439,11 +513,11 @@ app.get("/api/historical-data", async (req, res) => {
   nextDate.setDate(nextDate.getDate() + 1);
   try {
     const readings = await SensorReading.find({
-      mac: normalizedMac,
+      mac,
       timestamp: { $gte: selectedDate, $lt: nextDate },
     }).sort({ timestamp: 1 });
     const atSelectedTime = await SensorReading.findOne({
-      mac: normalizedMac,
+      mac,
       timestamp: { $lte: datetimeObj },
     }).sort({ timestamp: -1 });
     res.json({ readings, atSelectedTime });
@@ -456,27 +530,25 @@ app.get("/api/historical-data", async (req, res) => {
 // ✅ Serve snapshot images
 app.get("/api/snapshots/:imageName", (req, res) => {
   const imageName = req.params.imageName;
-  const imagePath = path.join("/home/techno/Pictures", imageName);
+  const imagePath = path.join("C:/snaps", imageName);
 
-  // Check if file exists
   if (!fs.existsSync(imagePath)) {
     return res.status(404).json({ error: "Image not found" });
   }
 
-  // Send the image file
   res.sendFile(imagePath);
 });
 
 // ✅ Get list of available snapshots
 app.get("/api/snapshots", (req, res) => {
-  const snapshotsDir = "/home/techno/Pictures";
+  const snapshotsDir = "C:/snaps";
 
   try {
     const files = fs
       .readdirSync(snapshotsDir)
       .filter((file) => /\.(jpg|jpeg|png|gif)$/i.test(file))
       .sort()
-      .slice(-15); // Get last 15 images
+      .slice(-15);
 
     res.json(files);
   } catch (err) {
@@ -489,6 +561,7 @@ app.get("/api/thresholds", (req, res) => {
   res.json(thresholds);
 });
 
+// Debug endpoints
 app.get("/api/debug/stats", (req, res) => {
   res.json(debug.stats());
 });
@@ -506,14 +579,15 @@ app.post("/api/debug/toggle", (req, res) => {
   });
 });
 
+// FIXED: Corrected connected-devices endpoint
 app.post("/api/debug/connected-devices", (req, res) => {
-  const devices = Array.from(connectedDevices.entries().map(([mac, socket]) => ({
-    mac: mac.toLowerCase(), //! Converting to LowerCase()
+  const devices = Array.from(connectedDevices.entries()).map(([mac, socket]) => ({
+    mac,
     connected: !socket.destroyed,
     remoteAddress: socket.remoteAddress,
     remotePort: socket.remotePort,
     lastSeen: getFormattedDateTime()
-  })));
+  }));
 
   res.json(devices);
 });
@@ -561,6 +635,7 @@ function getFormattedDateTime() {
   const SS = pad(today.getSeconds());
   return `${dd}/${mm}/${yy} ${HH}:${MM}:${SS}`;
 }
+
 function sendX(socket) {
   const msg = `%X000${getFormattedDateTime()}$`;
   console.log(`⬅️ Sending back: ${msg}`);
@@ -570,67 +645,44 @@ function sendX(socket) {
   }
 }
 
-// Function to delete MongoDB data older than 2 days
-function deleteData() {
-  const cutOffDate = new Date(Date.now() - (2 * 24 * 60 * 60 * 1000));
-
-
-
-  SensorReading.deleteMany({
-    timestamp: { $lt: cutOffDate }
-  }).then(result => {
-    console.log("Cleaned up", result);
-  }).catch(err => {
-    console.log("Error in cleanup");
-  });
-}
-
-
-
-// Getting Last Record Date
+// Database cleanup functions
 async function getData() {
-  try{
-
+  try {
     const sensorRecordsCount = await SensorReading.countDocuments();
-
 
     if (sensorRecordsCount > 10000) {
       const now = new Date();
 
       const lastDoc = await SensorReading.findOne().sort({ timestamp: 1 });
-      if(!lastDoc){
-        debug.log("No Sensor Data found", 'CLEANUP')
+      if (!lastDoc) {
+        debug.log("No Sensor Data found", 'CLEANUP');
       }
 
       const dateDiffer = Math.abs(now - lastDoc.timestamp) / (1000 * 60 * 60 * 24);
       const dateDifferRounded = Math.floor(dateDiffer);
 
       if (dateDifferRounded > 15) {
-        await SensorReading.deleteMany({ timestamp: lastDoc.timestamp })
+        await SensorReading.deleteMany({ timestamp: lastDoc.timestamp });
       }
     }
-  }catch(err){
+  } catch (err) {
     debug.error("Error in Deleting Data: ", err);
   }
 }
 
 function hourlyDBCleanup() {
-
   getData();
-
   setInterval(getData, 60 * 60 * 1000);
 }
 
 hourlyDBCleanup();
 
-
-const server = net.createServer((socket) => {
+// TCP Server
+const tcpServer = net.createServer((socket) => {
   let buffer = Buffer.alloc(0);
-
   const clientInfo = `${socket.remoteAddress}:${socket.remotePort}`;
 
-  // getData();
-  // debug.log(`New TCP Connection from`, clientInfo);
+  debug.log(`New TCP Connection from`, clientInfo);
 
   socket.on("data", async (data) => {
     console.log(
@@ -642,20 +694,10 @@ const server = net.createServer((socket) => {
     try {
       debug.packetCount++;
       debug.lastPacketTime = Date.now();
-      debug.bufferStats.discardedBytes.totalBytes += data.length;
+      debug.bufferStats.totalBytes += data.length;
 
-      // console.log(`\n=== NEW PACKET RECEIVED ===`);
-      // debug.log(`Raw data received (${data.length} bytes) from`, clientInfo);
-      // debug.log(`Raw data hex preview:`, data.toString('hex').substring(0, 100) + '...');
-      // console.log(`Raw as string: ${data.toString('utf-8')}`);
-
-
-      // // Print first 20 bytes in detail
-      // console.log('First 20 bytes (hex):');
-      // for (let i = 0; i < Math.min(20, data.length); i++) {
-      //   console.log(`  Byte ${i}: 0x${data[i].toString(16).padStart(2, '0')} -> '${String.fromCharCode(data[i])}'`);
-      // }
-
+      debug.log(`Raw data received (${data.length} bytes) from`, clientInfo);
+      debug.log(`Raw data hex preview:`, data.toString('hex').substring(0, 100) + '...');
 
       buffer = Buffer.concat([buffer, data]);
       debug.log(`Total buffer size: ${buffer.length} bytes`);
@@ -684,12 +726,12 @@ const server = net.createServer((socket) => {
         }
 
         if (buffer.length < 58) {
-          // Wait for more data for complete packet
           break;
         }
 
         // Extract one full packet starting at MAC
         const packet = buffer.slice(0, 58);
+        console.log(packet);
 
         const macRaw = packet.subarray(0, 17);
         let macRawStr = macRaw.toString("utf-8");
@@ -706,7 +748,7 @@ const server = net.createServer((socket) => {
           continue;
         }
 
-        const mac = sanitizedMac.toLowerCase(); //! Converting to LowerCase()
+        const mac = sanitizedMac;
         const humidity = +buffer.readFloatLE(17).toFixed(2);
         const insideTemperature = +buffer.readFloatLE(21).toFixed(2);
         const outsideTemperature = +buffer.readFloatLE(25).toFixed(2);
@@ -723,63 +765,33 @@ const server = net.createServer((socket) => {
         const fanLevel2Running = !!buffer[48];
         const fanLevel3Running = !!buffer[49];
         const fanLevel4Running = !!buffer[50];
-        const padding = buffer[51]; // unused
-        // console.log("Padding value: ", padding);
+        const padding = buffer[51];
+
         if (padding === 0x31 && !alreadyReplied) {
           sendX(socket);
-          alreadyReplied = 40; // Load Balancing
+          alreadyReplied = 40;
         }
-
-        // console.log("Water Leakage: ", waterLeakage);
-
-        // Checking if door is open or lock to click snapshots
-        /*         if ((padding === 0x43)) {
-                  console.log("⚠️ Capture Function runs...")
-                  sendX(socket);
-        
-                  const args = [
-                    '-rtsp_transport', 'tcp', '-i', 'rtsp://192.168.0.40/media/video1', '-frames-v', '1', 'C:/snaps'
-                  ]
-        
-                  const ffmpeg = spawn('ffmpeg', args);
-        
-                  ffmpeg.on('close', (code) => {
-                    if (code === 0) {
-                      console.log("Captured successfully...")
-                    } else {
-                      console.error(`ffmpeg process exited with code ${code}`)
-                    }
-                  })
-                } */
-
 
         if ((padding === 0x43)) {
           sendX(socket);
 
           console.log("📸 Capture pictures command received");
 
-          // Create timestamp
           const now = new Date();
-          // const timestamp = now.toISOString()
-          //   .replace(/[-:]/g, '')
-          //   .replace(/T/, '_')
-          //   .replace(/\..+/, '')
-          //   .slice(0, 15);
-
-          const timestamp = getFormattedDateTime();
+          const timestamp = now.toISOString()
+            .replace(/[-:]/g, '')
+            .replace(/T/, '_')
+            .replace(/\..+/, '')
+            .slice(0, 15);
 
           const fileName = `image_${timestamp}.jpg`;
           const outputDir = 'C:/snaps';
           const outputPath = path.join(outputDir, fileName);
 
-          console.log("fileName: ", fileName);
-
-          // Ensure directory exists
           if (!fs.existsSync(outputDir)) {
             fs.mkdirSync(outputDir, { recursive: true });
           }
 
-          // Capture snapshot
           const url = `http://192.168.0.120/CGI/command/snap?channel=01`;
 
           axios({
@@ -804,12 +816,11 @@ const server = net.createServer((socket) => {
             });
         }
 
-
         // Logging Incoming Data from Simulator
         const now = new Date();
         const fileName = `${now.getDate()}_${now.getMonth() + 1
           }_${now.getHours()}.inc`;
-        const IncLogDir = "C:/CommandLogs/inc";
+        const logDir = "C:/CommandLogs/inc";
 
         const sensorData = {
           humidity: humidity,
@@ -820,58 +831,33 @@ const server = net.createServer((socket) => {
           batteryBackup: batteryBackup,
         };
 
-        // Checks if path exists || Creates the path
-        if (!fs.existsSync(IncLogDir)) {
-          fs.mkdirSync(IncLogDir, { recursive: true });
+        if (!fs.existsSync(logDir)) {
+          fs.mkdirSync(logDir, { recursive: true });
         }
 
-        const IncLogFilePath = path.join(IncLogDir, fileName);
+        const filePath = path.join(logDir, fileName);
         const timestamp = now.toLocaleString();
-        const IncLogEntry = `[${timestamp}] | MAC:${mac} | Data:${JSON.stringify(
+        const logEntry = `[${timestamp}] | MAC:${mac} | Data:${JSON.stringify(
           sensorData
         )}"\n`;
 
-        // File writing happens after response
-        fs.appendFile(IncLogFilePath, IncLogEntry, (err) => {
+        fs.appendFile(filePath, logEntry, (err) => {
           if (err) {
             console.error("Failed to save log:", err);
           } else {
-            console.log(`✅ Log saved: ${IncLogFilePath}`);
+            console.log(`✅ Log saved: ${filePath}`);
           }
         });
-
-        /* ======== DELETING LOG FILE ======== */
-/*         const IncLogDeleteFile = `${now.getDate() - 3}_${now.getMonth() + 1
-          }_${now.getHours()}.inc`;
-
-        const IncLogDeleteDir = path.join(IncLogDir, IncLogDeleteFile);
-
-        fs.access(IncLogDeleteDir, fs.constants.F_OK, (err) => {
-          if (err) {
-            console.log(`⚠️ Error in Finding ${IncLogDeleteDir} File ⚠️: ${err}`);
-            return;
-          }
-
-          fs.unlink(IncLogDeleteDir, (err) => {
-            if (err) {
-              console.log(`⚠️ Error in Deleting ${IncLogDeleteDir} File ⚠️: ${err}`);
-            }
-
-            console.log(`✅ ${IncLogDeleteDir} successfully deleted ✅`);
-          })
-        })
- */        /* ======== DELETING LOG FILE ======== */
-
 
         if (alreadyReplied) alreadyReplied--;
         const fanStatusBits = buffer.readUInt16LE(52);
         const fanStatus = [];
         for (let i = 0; i < 6; i++) {
-          fanStatus[i] = (fanStatusBits >> (i * 2)) & 0x03; // 0=off, 1=healthy, 2=faulty
+          fanStatus[i] = (fanStatusBits >> (i * 2)) & 0x03;
         }
         console.log("fanStatus", fanStatus);
 
-        const fanFailBits = buffer.readUInt32LE(54); // <-- Critical offset //Password
+        const fanFailBits = buffer.readUInt32LE(54);
         const floats = [
           humidity,
           insideTemperature,
@@ -967,10 +953,11 @@ const server = net.createServer((socket) => {
           const alarmFileName = `${now.getDate()}_${now.getMonth() + 1
             }_${now.getHours()}_Alarm.inc`;
 
+          let logAlarm;
           if (fanStatus.includes(2)) {
-            var logAlarm = `[${timestamp}] | MAC: ${mac}| ${activeAlarms} | Fan Status: ${fanStatus}\n`;
+            logAlarm = `[${timestamp}] | MAC: ${mac}| ${activeAlarms} | Fan Status: ${fanStatus}\n`;
           } else {
-            var logAlarm = `[${timestamp}] | MAC: ${mac}| ${activeAlarms}\n`;
+            logAlarm = `[${timestamp}] | MAC: ${mac}| ${activeAlarms}\n`;
           }
 
           const alarmFilePath = path.join(alarmLogDir, alarmFileName);
@@ -984,7 +971,7 @@ const server = net.createServer((socket) => {
           });
         }
 
-        // Build and save the reading (fan status is now independent, not derived)
+        // Build and save the reading
         const reading = new SensorReading({
           mac,
           humidity,
@@ -1003,7 +990,7 @@ const server = net.createServer((socket) => {
           fanLevel2Running,
           fanLevel3Running,
           fanLevel4Running,
-          fanFailBits, // keep for legacy (optional)
+          fanFailBits,
           fan1Status: fanStatus[0],
           fan2Status: fanStatus[1],
           fan3Status: fanStatus[2],
@@ -1013,9 +1000,8 @@ const server = net.createServer((socket) => {
           ...thresholdAlarms,
         });
 
-        // console.log("fan1", fanLevel1Running);
-
         connectedDevices.set(mac, socket);
+        broadcastToWebClients(reading);
         readingBuffer.push(reading);
 
         if (readingBuffer.length >= BULK_SAVE_LIMIT) {
@@ -1027,7 +1013,6 @@ const server = net.createServer((socket) => {
         }
 
         buffer = buffer.slice(58);
-
         debug.log(`✅ Packet processed successfully for MAC: ${mac}`, `Time: ${getFormattedDateTime()}`);
       }
     } catch (err) {
@@ -1053,6 +1038,7 @@ const server = net.createServer((socket) => {
   });
 });
 
+// Periodic bulk save
 setInterval(() => {
   if (readingBuffer.length > 0) {
     const toSave = [...readingBuffer];
@@ -1063,10 +1049,14 @@ setInterval(() => {
   }
 }, 5000);
 
-server.listen(4000, "0.0.0.0", () => {
-  console.log("TCP server listening on port 4000");
+// Start servers
+tcpServer.listen(4000, "0.0.0.0", () => {
+  console.log("✅ TCP server listening on port 4000");
 });
 
 app.listen(5000, "0.0.0.0", () => {
-  console.log("HTTP server running on port 5000");
+  console.log("✅ HTTP server running on port 5000");
 });
+
+console.log("🚀 All servers started successfully!");
+console

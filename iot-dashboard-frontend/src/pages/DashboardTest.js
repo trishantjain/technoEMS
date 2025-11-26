@@ -20,7 +20,7 @@ import swal from "sweetalert2";
 
 const defaultLocation = [28.6139, 77.209];
 
-function DashboardView() {
+function DashboardTest() {
   const [readings, setReadings] = useState([]);
   const [devices, setDevices] = useState([]);
   const [deviceMeta, setDeviceMeta] = useState([]);
@@ -144,7 +144,7 @@ function DashboardView() {
   }, [selectedMac, deviceMeta]);
 
 
-  useEffect(() => { 
+  useEffect(() => {
     const iframe = document.querySelector(".camera-iframe");
     if (iframe) {
       iframe.style.transform = `scale(${zoom}) rotate(${rotation}deg)`;
@@ -316,7 +316,7 @@ function DashboardView() {
         if (newLock && newLock.trim() !== "") {
           sendToLog(`Lock Reset ${newLock} clicked`);
           sendCommand(`%L00R${newLock}${getFormattedDateTime()}$$`);
-          setStatus(`New password ${newLock} `)
+          setStatus(`New passowrd ${newLock} `)
         } else {
           setStatus("New lock value cannot be empty!");
         }
@@ -348,7 +348,7 @@ function DashboardView() {
   const rotateFeed = () => setRotation((prev) => (prev + 90) % 360);
 
   const isAlarmActive = (reading) =>
-    reading.fireAlarm || reading.waterLeakage || reading.waterLogging || reading.lockStatus === "OPEN" || reading.doorStatus === "OPEN" || [1, 2, 3].includes(reading.password);
+    reading.fireAlarm || reading.waterLeakage || reading.waterLogging;
 
   const historicalData = readings
     .filter((r) => r.mac === selectedMac && r.timestamp)
@@ -426,9 +426,20 @@ function DashboardView() {
     },
   ];
 
+  // const getGaugeColor = (value, max = 100) => {
+  //   const percentage = (value / max) * 100;
+
+  //   if (percentage <= 20) return '#00FF00'; // Green - Low
+  //   else if (percentage <= 40) return '#7CFC00'; // Light Green
+  //   else if (percentage <= 60) return '#FFFF00'; // Yellow - Medium
+  //   else if (percentage <= 80) return '#FFA500'; // Orange
+  //   else return '#FF0000'; // Red - High
+  // };
+
   return (
     <>
       {/* Logo */}
+      <div className="device-tile">Dashboard Testing Page</div>
       <div
         style={{
           position: "absolute",
@@ -474,8 +485,68 @@ function DashboardView() {
                 </button>
               </div>
 
+
+
+
+              {/* <GaugeComponent
+                id="gauge-component3"
+                arc={{
+                  width: 0.15,
+                  padding: 0,
+                  subArcs: [
+                    { limit: 20, color: '#FF0000' },
+                    { limit: 87, color: '#7CFC00' },
+                    { limit: 95, color: '#FF0000' }
+                  ]
+
+                }}
+                labels={{ tickLabels: { hideMinMax: true } }}
+                value={91}
+                pointer={{ type: "arrow", elastic: true }}
+              /> */}
               {activeTab === "gauges" && (
                 <div className="gauges grid-3x3">
+                  {/* <GaugeComponent
+                    className="gauge-box"
+                    type="grafana"
+                    // arc={{
+                    //   width: 0.2,
+                    //   padding: 0.005,
+                    //   cornerRadius: 1,
+                    //   subArcs: [
+                    //     { limit: 20, color: '#FF0000' },
+                    //     { limit: 25, color: '#FFFF00' },
+                    //     { limit: 87, color: '#7CFC00' },
+                    //     { limit: 90, color: '#FFFF00' },
+                    //     { limit: 95, color: '#FF0000' }
+                    //   ]
+                    // }}
+                    value={latestReading.insideTemperature}
+                    minValue={0}
+                    maxValue={100}
+                    labels={{
+                      valueLabel: {
+                        formatTextValue: value => value + 'g/m3',
+                        style: {
+                          fontSize: '20px',
+                          fill: getGaugeColor(latestReading.insideTemperature, 100), // Dynamic text color
+                          fontWeight: 'bold'
+                        }
+                      },
+                      tickLabels: {
+                        type: 'outer',
+                        hideMinMax: true, // ← This hides 0% and 100%
+                        valueConfig: {
+                          formatTextValue: value => value === 0 || value === 100 ? '' : value + '%'
+                        },
+                        style: {
+                          fill: '#ccc',
+                          fontSize: '12px'
+                        }
+                      }
+                    }}
+
+                  /> */}
                   <Gauge
                     label="Inside Temp"
                     value={latestReading.insideTemperature}
@@ -896,7 +967,6 @@ function DashboardView() {
               return deviceMeta.map((device) => {
                 const mac = device.mac;
                 const reading = latestReadingsByMac[mac];
-                console.log("⚠️Reading", reading)
                 let colorClass = "disconnected"; // default
 
                 if (reading && reading.timestamp) {
@@ -1072,4 +1142,4 @@ function Gauge({ label, value, max, color, alarm = false }) {
   );
 }
 
-export default DashboardView;
+export default DashboardTest;
