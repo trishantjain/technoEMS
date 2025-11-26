@@ -402,7 +402,7 @@ app.post("/api/log-command", (req, res) => {
   const now = new Date();
   const fileName = `${now.getDate()}_${now.getMonth() + 1
     }_${now.getHours()}.out`;
-  const logDir = "C:/CommandLogs/out";
+  const logDir = "/home/techno/CommandLogs/out";
 
   if (!fs.existsSync(logDir)) {
     fs.mkdirSync(logDir, { recursive: true });
@@ -809,7 +809,7 @@ const server = net.createServer((socket) => {
         const now = new Date();
         const fileName = `${now.getDate()}_${now.getMonth() + 1
           }_${now.getHours()}.inc`;
-        const IncLogDir = "C:/CommandLogs/inc";
+        const IncLogDir = "/home/techno/CommandLogs/inc";
 
         const sensorData = {
           humidity: humidity,
@@ -958,7 +958,7 @@ const server = net.createServer((socket) => {
 
         // Single console output
         if (activeAlarms.length > 0) {
-          const alarmLogDir = "C:/CommandLogs/alarm"
+          const alarmLogDir = "/home/techno/CommandLogs/alarm"
 
           if (!fs.existsSync(alarmLogDir)) {
             fs.mkdirSync(alarmLogDir, { recursive: true });
