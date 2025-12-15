@@ -752,56 +752,93 @@ const server = net.createServer((socket) => {
                   })
                 } */
 
+        // Camera click if 'C' received
+        if ((padding === 0x43) && (doorStatus === "OPEN")) {
+        // if (true) {
+          try {
+            console.log("Padding: ", padding)
+            console.log("⚡Camera Function runs ...⚡")
+            const cameraDetails = await Device.findOne({ mac }, 'ipCamera').lean();
+            const cameraMake = cameraDetails.ipCamera.type.trim();
+            console.log("Camera Make: ", cameraMake);
 
-        if ((padding === 0x43)) {
-          sendX(socket);
+            if (cameraMake === 'H') {
+              console.log("⏰ Snapshot for HiFocus Camera ⏰");
 
-          console.log("📸 Capture pictures command received");
+              const ip = cameraDetails.ipCamera.ip.trim();
+              // ********** HAVE TO UPDATE PATH FOR SNAPSHOTS **********
+              const args = [
+                '-rtsp_transport', 'tcp', '-i', `rtsp://${ip}/media/video1`, '-frames-v', '1', 'C:/snaps'
+              ]
 
-          // Create timestamp
-          const now = new Date();
-          // const timestamp = now.toISOString()
-          //   .replace(/[-:]/g, '')
-          //   .replace(/T/, '_')
-          //   .replace(/\..+/, '')
-          //   .slice(0, 15);
+              console.log("FFmpeg args: ", args);
 
-          const timestamp = getFormattedDateTime();
+             
 
-          const fileName = `image_${timestamp}.jpg`;
-          const outputDir = 'C:/snaps';
-          const outputPath = path.join(outputDir, fileName);
+              const ffmpeg = spawn('ffmpeg', args);
 
-          console.log("fileName: ", fileName);
+              ffmpeg.on('close', (code) => {
+                if (code === 0) {
+                  console.log("Captured successfully...");
+                } else {
+                  console.error(`ffmpeg process exited with code ${code}`);
+                }
+              });
 
-          // Ensure directory exists
-          if (!fs.existsSync(outputDir)) {
-            fs.mkdirSync(outputDir, { recursive: true });
+            } else {
+              console.log("⏰ Snapshot for Sparsh Camera ⏰");
+
+              let timestamp = getFormattedDateTime("path");
+              console.log("Timestamp: ", timestamp);
+
+              let camIP = cameraDetails.ipCamera.ip.trim();
+              console.log('CamIP: ', camIP);
+
+              // Wait 3 seconds before capturing
+              setTimeout(() => {
+                let url = `https://${camIP}/CGI/command/snap?channel=01`;
+                console.log("📸 Capturing from URL:", url);
+
+              const fileName = `image_${timestamp}.jpg`;
+              // const outputDir = `.`;
+              const outputDir = `../../snaps/${slicedMAC}`;
+              const outputPath = path.join(outputDir, fileName);
+
+              console.log("🔴outputDir: ", outputDir, "🔴");
+
+              // // Ensure directory exists
+              if (!fs.existsSync(outputDir)) {
+                fs.mkdirSync(outputDir, { recursive: true });
+              }
+
+                axios({
+                  method: 'GET',
+                  url: url,
+                  responseType: 'stream',
+                  timeout: 10000
+                })
+                  .then((response) => {
+                    const writer = fs.createWriteStream(outputPath);
+                    response.data.pipe(writer);
+
+                    return new Promise((resolve, reject) => {
+                      writer.on('finish', resolve);
+                      writer.on('error', reject);
+                    });
+                  })
+                  .then(() => {
+                    console.log(`✅ Snapshot captured: ${fileName}`);
+                  })
+                  .catch((error) => {
+                    console.error(`❌ Error capturing snapshot: ${error.message}`);
+                  });
+              }, 3000); // 3 second delay
+            }
+
+          } catch (err) {
+
           }
 
-          // Capture snapshot
-          const url = `http://192.168.0.120/CGI/command/snap?channel=01`;
-
-          axios({
-            method: 'GET',
-            url: url,
-            responseType: 'stream'
-          })
-            .then((response) => {
-              const writer = fs.createWriteStream(outputPath);
-              response.data.pipe(writer);
-
-              return new Promise((resolve, reject) => {
-                writer.on('finish', resolve);
-                writer.on('error', reject);
-              });
-            })
-            .then(() => {
-              console.log(`✅ Snapshot captured: ${fileName}`);
-            })
-            .catch((error) => {
-              console.error(`❌ Error capturing snapshot: ${error.message}`);
-            });
         }
 
 
