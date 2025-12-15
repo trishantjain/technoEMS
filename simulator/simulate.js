@@ -289,11 +289,23 @@ function startDevice(mac, index) {
       console.error(`💥 [${mac}] CONNECTION ERROR:`, err.message);
       connectedDevices.delete(mac); // 🔧 NEW: Remove from map
       setTimeout(() => startDevice(mac, index), 5000);
+
+      setTimeout(() => {
+        console.log(`🔄 [${mac}] Retrying connection...`);
+        startDevice(mac, index);
+      }, 3000);
+
     });
 
     client.on('close', () => {
       console.warn(`🔌 [${mac}] CONNECTION CLOSED`);
       connectedDevices.delete(mac); // 🔧 NEW: Remove from map
+
+      setTimeout(() => {
+        console.log(`🔄 [${mac}] Retrying connection...`);
+        startDevice(mac, index);
+      }, 3000);
+
     });
 
   } catch (err) {
