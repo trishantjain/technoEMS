@@ -570,55 +570,90 @@ function sendX(socket) {
   }
 }
 
-// Function to delete MongoDB data older than 2 days
-function deleteData() {
-  const cutOffDate = new Date(Date.now() - (2 * 24 * 60 * 60 * 1000));
+// Function to delete MongoDB data older than N days (default 2)
+// async function deleteData(days = 2) {
+//   const cutOffDate = new Date(Date.now() - (days * 24 * 60 * 60 * 1000));
+//   try {
+//     const result = await SensorReading.deleteMany({
+//       timestamp: { $lt: cutOffDate }
+//     });
+//     debug.log(`Cleaned up documents older than ${days} days: ${result.deletedCount}`, 'CLEANUP');
+//   } catch (err) {
+//     debug.error("Error during time-based cleanup", err);
+//   }
+// }
 
+// Function to delete DB Records
+async function DBCleanup() {
+  try {
+    const MAX_DOCS = parseInt(process.env.MAX_SENSOR_DOCS || '10000', 10);
+    // const RETENTION_DAYS = parseInt(process.env.RETENTION_DAYS || '15', 10);
 
+    // 1) Time-based retention purge
+    // const retentionCutoff = new Date(Date.now() - (RETENTION_DAYS * 24 * 60 * 60 * 1000));
+    // const retentionRes = await SensorReading.deleteMany({
+    //   timestamp: { $lt: retentionCutoff }
+    // });
+    // if (retentionRes.deletedCount) {
+    //   debug.log(`Retention purge: deleted ${retentionRes.deletedCount} docs older than ${RETENTION_DAYS} days`, 'CLEANUP');
+    // }
 
-  SensorReading.deleteMany({
-    timestamp: { $lt: cutOffDate }
-  }).then(result => {
-    console.log("Cleaned up", result);
-  }).catch(err => {
-    console.log("Error in cleanup");
-  });
-}
-
-
-
-// Getting Last Record Date
-async function getData() {
-  try{
-
+    // Count-based capping
     const sensorRecordsCount = await SensorReading.countDocuments();
-
-
-    if (sensorRecordsCount > 10000) {
-      const now = new Date();
-
-      const lastDoc = await SensorReading.findOne().sort({ timestamp: 1 });
-      if(!lastDoc){
-        debug.log("No Sensor Data found", 'CLEANUP')
-      }
-
-      const dateDiffer = Math.abs(now - lastDoc.timestamp) / (1000 * 60 * 60 * 24);
-      const dateDifferRounded = Math.floor(dateDiffer);
-
-      if (dateDifferRounded > 15) {
-        await SensorReading.deleteMany({ timestamp: lastDoc.timestamp })
-      }
+    if (sensorRecordsCount === 0) {
+      debug.log("No Sensor Data found", 'CLEANUP');
+      return;
     }
-  }catch(err){
-    debug.error("Error in Deleting Data: ", err);
+
+    if (sensorRecordsCount > MAX_DOCS) {
+      // Determine timestamp boundary at the Nth most recent document
+      const boundaryDoc = await SensorReading
+        .findOne({}, { timestamp: 1 })
+        .sort({ timestamp: -1 }) // Latest Doc first
+        .skip(MAX_DOCS - 1);
+
+      if (!boundaryDoc || !boundaryDoc.timestamp) {
+        debug.log("Unable to determine boundary timestamp for capping", 'CLEANUP');
+        return;
+      }
+
+      const capRes = await SensorReading.deleteMany({
+        timestamp: { $lt: boundaryDoc.timestamp }
+      });
+      debug.log(`Count capping: deleted ${capRes.deletedCount} docs older than ${boundaryDoc.timestamp.toISOString()}`, 'CLEANUP');
+    }
+  } catch (err) {
+    debug.error("Error in DB cleanup", err);
   }
 }
 
+// Cleaning up DB hourly
 function hourlyDBCleanup() {
+  let isCleaning = false;
 
-  getData();
+  const runCleanup = async () => {
+    if (isCleaning) {
+      debug.log("Cleanup already running, skipping this tick", 'CLEANUP');
+      return;
+    }
+    isCleaning = true;
+    try {
+      await DBCleanup();
+    } catch (e) {
+      // getData already logs errors
+    } finally {
+      isCleaning = false;
+    }
+  };
 
-  setInterval(getData, 60 * 60 * 1000);
+  // Run immediately, then hourly
+  runCleanup();
+  setInterval(runCleanup, 60 * 1000);
+}
+
+hourlyDBCleanup();
+
+// Function to delete log files older than 3 days
 }
 
 hourlyDBCleanup();
