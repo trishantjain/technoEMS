@@ -654,10 +654,53 @@ function hourlyDBCleanup() {
 hourlyDBCleanup();
 
 // Function to delete log files older than 3 days
+function deleteLogFiles() {
+  const IncLogDir = "C:/CommandLogs/inc";
+  // const IncLogDir = "../CommandLogs/inc"
+
+  const daysThreshold = 3;
+  const thresholdTime = Date.now() - (daysThreshold * 24 * 60 * 60 * 1000);
+
+  fs.readdir(IncLogDir, (err, files) => {
+    if (err) {
+      // If directory doesn't exist, that's fine - nothing to delete
+      if (err.code === 'ENOENT') return;
+      console.log(`⚠️ Error reading log directory: ${err}`);
+      return;
+    }
+
+    files.forEach(filename => {
+      if (!filename.endsWith('.inc')) return;
+
+      const filePath = path.join(IncLogDir, filename);
+
+      fs.stat(filePath, (err, stats) => {
+        if (err) {
+          console.log(`⚠️ Error getting stats for ${filename}: ${err}`);
+          return;
+        }
+
+        // Check if file is older than threshold
+        if (stats.mtimeMs < thresholdTime) {
+          fs.unlink(filePath, (err) => {
+            if (err) {
+              console.log(`⚠️ Error deleting ${filename}: ${err}`);
+            } else {
+              console.log(`✅ ${filename} successfully deleted ✅`);
+            }
+          });
+        }
+      });
+    });
+  });
 }
 
-hourlyDBCleanup();
-
+function logCleanupScheduler() {
+  // Run immediately, then every 24 hours
+  deleteLogFiles();
+  setInterval(deleteLogFiles, 24 * 60 * 60 * 1000);
+}
+logCleanupScheduler();
 
 const server = net.createServer((socket) => {
   let buffer = Buffer.alloc(0);
