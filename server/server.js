@@ -924,15 +924,15 @@ const server = net.createServer((socket) => {
         const now = new Date();
         const fileName = `${now.getDate()}_${now.getMonth() + 1
           }_${now.getHours()}.inc`;
-        const IncLogDir = "/home/techno/CommandLogs/inc";
+        const IncLogDir = '../../CommandLogs/inc'
 
         const sensorData = {
           humidity: humidity,
-          insideTemperature: insideTemperature,
-          outsideTemperature: outsideTemperature,
-          inputVoltage: inputVoltage,
-          outputVoltage: outputVoltage,
-          batteryBackup: batteryBackup,
+          insideTemp: insideTemperature,
+          outsideTemp: outsideTemperature,
+          IPVoltage: inputVoltage,
+          OPVoltage: outputVoltage,
+          batBackup: batteryBackup,
         };
 
         // Checks if path exists || Creates the path
@@ -941,8 +941,8 @@ const server = net.createServer((socket) => {
         }
 
         const IncLogFilePath = path.join(IncLogDir, fileName);
-        const timestamp = now.toLocaleString();
-        const IncLogEntry = `[${timestamp}] | MAC:${mac} | Data:${JSON.stringify(
+        const timestamp = now.toLocaleString("en-IN",{hour12: false});
+        const IncLogEntry = `[${timestamp}]Sys:${slicedMAC}|${JSON.stringify(
           sensorData
         )}"\n`;
 
@@ -955,27 +955,6 @@ const server = net.createServer((socket) => {
           }
         });
 
-        /* ======== DELETING LOG FILE ======== */
-/*         const IncLogDeleteFile = `${now.getDate() - 3}_${now.getMonth() + 1
-          }_${now.getHours()}.inc`;
-
-        const IncLogDeleteDir = path.join(IncLogDir, IncLogDeleteFile);
-
-        fs.access(IncLogDeleteDir, fs.constants.F_OK, (err) => {
-          if (err) {
-            console.log(`⚠️ Error in Finding ${IncLogDeleteDir} File ⚠️: ${err}`);
-            return;
-          }
-
-          fs.unlink(IncLogDeleteDir, (err) => {
-            if (err) {
-              console.log(`⚠️ Error in Deleting ${IncLogDeleteDir} File ⚠️: ${err}`);
-            }
-
-            console.log(`✅ ${IncLogDeleteDir} successfully deleted ✅`);
-          })
-        })
- */        /* ======== DELETING LOG FILE ======== */
 
 
         if (alreadyReplied) alreadyReplied--;
@@ -1033,47 +1012,47 @@ const server = net.createServer((socket) => {
         const activeAlarms = [];
 
         if (thresholdAlarms.insideTemperatureAlarm) {
-          activeAlarms.push(`Inside Temperature: ${insideTemperature}`);
+          activeAlarms.push(`InsideTemp:${insideTemperature}`);
         }
         if (thresholdAlarms.outsideTemperatureAlarm) {
-          activeAlarms.push(`Outside Temperature: ${outsideTemperature}`);
+          activeAlarms.push(`OutsideTemp:${outsideTemperature}`);
         }
         if (thresholdAlarms.humidityAlarm) {
-          activeAlarms.push(`Humidity: ${humidity}`);
+          activeAlarms.push(`Humidity:${humidity}`);
         }
         if (thresholdAlarms.inputVoltageAlarm) {
-          activeAlarms.push(`Input Voltage: ${inputVoltage}`);
+          activeAlarms.push(`I/PVolt:${inputVoltage}`);
         }
         if (thresholdAlarms.outputVoltageAlarm) {
-          activeAlarms.push(`Output Voltage: ${outputVoltage}`);
+          activeAlarms.push(`O/PVolt:${outputVoltage}`);
         }
         if (thresholdAlarms.batteryBackupAlarm) {
-          activeAlarms.push(`Battery Backup: ${batteryBackup}`);
+          activeAlarms.push(`BatBackup:${batteryBackup}`);
         }
 
         if (waterLogging) {
-          activeAlarms.push("Water Logging Alarm");
+          activeAlarms.push("Water Logging");
         }
 
         if (waterLeakage) {
-          activeAlarms.push("Water Leakage Alarm");
+          activeAlarms.push("Water Leakage");
         }
 
         if (doorStatus) {
-          activeAlarms.push("Door Alarm");
+          activeAlarms.push("Door");
         }
 
         if (lockStatus) {
-          activeAlarms.push("Lock Alarm");
+          activeAlarms.push("Lock");
         }
 
         if (fireAlarm) {
-          activeAlarms.push("Fire Alarm");
+          activeAlarms.push("Fire");
         }
 
         // Single console output
         if (activeAlarms.length > 0) {
-          const alarmLogDir = "/home/techno/CommandLogs/alarm"
+          const alarmLogDir = "../../CommandLogs/alarm"
 
           if (!fs.existsSync(alarmLogDir)) {
             fs.mkdirSync(alarmLogDir, { recursive: true });
@@ -1083,9 +1062,9 @@ const server = net.createServer((socket) => {
             }_${now.getHours()}_Alarm.inc`;
 
           if (fanStatus.includes(2)) {
-            var logAlarm = `[${timestamp}] | MAC: ${mac}| ${activeAlarms} | Fan Status: ${fanStatus}\n`;
+            var logAlarm = `[${timestamp}]Sys:${slicedMAC}|${activeAlarms}|FanStatus:${fanStatus}\n`;
           } else {
-            var logAlarm = `[${timestamp}] | MAC: ${mac}| ${activeAlarms}\n`;
+            var logAlarm = `[${timestamp}]Sys:${slicedMAC}|${activeAlarms}\n`;
           }
 
           const alarmFilePath = path.join(alarmLogDir, alarmFileName);
