@@ -147,6 +147,8 @@ app.post("/api/login", async (req, res) => {
   res.json({ role: user.role, token }); // ✅ return role and token
 });
 
+
+// *====================  USER API  ========================
 // ✅ Register new user
 app.post("/api/register-user", async (req, res) => {
   const { username, password, role } = req.body;
@@ -177,90 +179,6 @@ app.get("/api/users", async (req, res) => {
   } catch (err) {
     console.error("Failed to fetch users:", err);
     res.status(500).json({ error: "Failed to fetch users" });
-  }
-});
-
-app.post("/api/register-device", async (req, res) => {
-  const { mac, locationId, address, latitude, longitude, ipCamera } = req.body;
-  try {
-    const normalizedMac = mac.toLowerCase(); //! Converting to LowerCase()
-
-    const device = new Device({
-      mac: normalizedMac, //! Converting to LowerCase()
-      locationId,
-      address,
-      latitude,
-      longitude,
-      ipCamera: ipCamera || "",
-    });
-    await device.save();
-    res.json({ message: "Device registered successfully" });
-  } catch (err) {
-    res.status(500).json({ error: "Error registering device" });
-  }
-});
-
-// ✅ Get registered device metadata
-app.get("/api/devices-info", async (req, res) => {
-  try {
-    const devices = await Device.find().sort({locationId: -1}); // includes ipCamera
-    /* NEW ADDED */
-    const normalizedDevices = devices.map(device => ({
-      ...device._doc,
-      mac: device.mac.toLowerCase() //! Converting to LowerCase()
-    }));
-    res.json(normalizedDevices); //! Converting to LowerCase()
-  } catch (err) {
-    res.status(500).json({ error: "Error fetching devices" });
-  }
-});
-
-// ✅ Delete device by MAC
-app.put("/api/device/:mac", async (req, res) => {
-  try {
-    /* NEW ADDED*/
-    const mac = req.params.mac.toLowerCase(); //! Converting to LowerCase()
-    const { password, ...updateFields } = req.body;
-    if (updateFields.locationId && updateFields.locationId.length > 17)
-      return res
-        .status(400)
-        .json({ error: "Location ID must be 17 characters or fewer" });
-    if (password !== process.env.ADMIN_PASSWORD)
-      return res
-        .status(403)
-        .json({ error: "Unauthorized: Invalid admin password" });
-    // const { mac } = req.params;
-    const updatedDevice = await Device.findOneAndUpdate(
-      { mac },
-      { $set: updateFields },
-      { new: true }
-    );
-    if (!updatedDevice)
-      return res.status(404).json({ error: "Device not found" });
-    res.json(updatedDevice);
-  } catch (error) {
-    console.error("Error updating device:", error);
-    res.status(500).json({ error: "Server error while updating device" });
-  }
-});
-
-app.post("/api/device/delete/:mac", async (req, res) => {
-  const { password } = req.body;
-  /* NEW ADDED*/
-  const mac = req.params.mac.toLowerCase(); //! Converting to LowerCase()
-
-  if (password !== process.env.ADMIN_PASSWORD)
-    return res
-      .status(403)
-      .json({ error: "Unauthorized: Invalid admin password" });
-  try {
-    const result = await Device.deleteOne({ mac: req.params.mac });
-    if (result.deletedCount === 0)
-      return res.status(404).json({ error: "Device not found" });
-    res.json({ message: "Device deleted successfully" });
-  } catch (err) {
-    console.error("Error deleting device:", err);
-    res.status(500).json({ error: "Error deleting device" });
   }
 });
 
@@ -299,20 +217,17 @@ app.put("/api/user/:id", async (req, res) => {
 });
 
 // ✅ Delete User
-app.post("/api/user/delete/:id", async (req, res) => {
+app.delete("/api/user/:username", async (req, res) => {
   try {
 
-    const { adminPassword, uname } = req.body;
-
-    console.log("Admin Password: ", adminPassword);
-    console.log("UserName: ", uname);
+    const { adminPassword } = req.body;
 
     if (adminPassword !== process.env.ADMIN_PASSWORD)
       return res
         .status(403)
         .json({ error: "Unauthorized: Invalid admin password" });
 
-    const result = await User.deleteOne({ uname: req.params.username });
+    const result = await User.deleteOne({ username: req.params.username });
     if (result.deletedCount === 0)
       return res.status(404).json({ error: "User not found" });
     res.json({ message: "User deleted successfully" });
@@ -323,6 +238,215 @@ app.post("/api/user/delete/:id", async (req, res) => {
     res.status(500).json({ error: "Server error while updating device" });
   }
 });
+// *====================  USER API  ========================
+
+
+// *====================  DEVICE API  ====================== 
+// ✅ Register new device
+app.post("/api/register-device", async (req, res) => {
+  const { mac, locationId, address, latitude, longitude, ipCamera } = req.body;
+  try {
+    const normalizedMac = mac.toLowerCase(); //! Converting to LowerCase()
+    let parsedCamera = ipCamera;
+
+    if (ipCamera && typeof ipCamera === 'string') {
+      const [camType, camIP] = ipCamera.split(',');
+      parsedCamera = {
+        type: camType,
+        ip: camIP.trim(),
+      }
+    }
+
+    // console.log("Parsed Camera: ", parsedCamera);
+    const device = new Device({
+      mac: normalizedMac, //! Converting to LowerCase()
+      locationId,
+      address,
+      latitude,
+      longitude,
+      ipCamera: parsedCamera || "",
+    });
+    console.log("Device to be saved: ", device);
+    await device.save();
+    console.log("Device saved");
+    res.json({ message: "Device registered successfully" });
+  } catch (err) {
+    res.status(500).json({ error: "Error registering device" });
+  }
+});
+
+// ✅ Get registered device metadata
+app.get("/api/devices-info", async (req, res) => {
+  try {
+    const devices = await Device.find().sort({ locationId: -1 }); // includes ipCamera
+    /* NEW ADDED */
+    const normalizedDevices = devices.map(device => ({
+      ...device._doc,
+      mac: device.mac.toLowerCase() //! Converting to LowerCase()
+    }));
+    res.json(normalizedDevices); //! Converting to LowerCase()
+  } catch (err) {
+    res.status(500).json({ error: "Error fetching devices" });
+  }
+});
+
+// ✅ Get connected MACs
+app.get("/api/devices", (req, res) => {
+  res.json(Array.from(connectedDevices.keys()).map(mac => mac.toLowerCase())); //! Converting to LowerCase()
+});
+
+// ✅ Update device by MAC
+app.put("/api/device/:mac", async (req, res) => {
+  try {
+    /* NEW ADDED*/
+    const mac = req.params.mac.toLowerCase(); //! Converting to LowerCase()
+    const { password, ...updateFields } = req.body;
+
+    if (updateFields.locationId && updateFields.locationId.length > 17)
+      return res
+        .status(400)
+        .json({ error: "Location ID must be 17 characters or fewer" });
+
+    if (password !== process.env.ADMIN_PASSWORD)
+      return res
+        .status(403)
+        .json({ error: "Unauthorized: Invalid admin password" });
+
+    if (updateFields.ipCamera && typeof updateFields.ipCamera === 'string') {
+      const [camType, camIP] = updateFields.ipCamera.split(',');
+      updateFields.ipCamera = {
+        type: camType,
+        ip: camIP.trim(),
+      }
+
+    }
+
+    const updatedDevice = await Device.findOneAndUpdate(
+      { mac },
+      { $set: updateFields },
+      { new: true }
+    );
+    if (!updatedDevice)
+      return res.status(404).json({ error: "Device not found" });
+    res.json(updatedDevice);
+  } catch (error) {
+    console.error("Error updating device:", error);
+    res.status(500).json({ error: "Server error while updating device" });
+  }
+});
+
+app.post("/api/device/delete/:mac", async (req, res) => {
+  const { password } = req.body;
+  /* NEW ADDED*/
+  const mac = req.params.mac.toLowerCase(); //! Converting to LowerCase()
+
+  if (password !== process.env.ADMIN_PASSWORD)
+    return res
+      .status(403)
+      .json({ error: "Unauthorized: Invalid admin password" });
+  try {
+    const result = await Device.deleteOne({ mac: req.params.mac });
+    if (result.deletedCount === 0)
+      return res.status(404).json({ error: "Device not found" });
+    res.json({ message: "Device deleted successfully" });
+  } catch (err) {
+    console.error("Error deleting device:", err);
+    res.status(500).json({ error: "Error deleting device" });
+  }
+});
+
+// ✅ Get only registered MACs
+app.get("/api/all-devices", async (req, res) => {
+  try {
+    const devices = await Device.find({}, "mac");
+    res.json(devices.map((d) => d.mac.toLowerCase())); //! Converting to LowerCase()
+  } catch (error) {
+    console.error("Error fetching registered devices:", error);
+    res.status(500).json({ error: "Failed to fetch devices" });
+  }
+});
+
+// ✅ Get latest reading by MAC
+app.get("/api/device/:mac", async (req, res) => {
+  try {
+    const normalizedMac = req.params.mac.toLowerCase(); //! Converting to LowerCase()
+    const latest = await SensorReading.findOne({ mac: normalizedMac }).sort({
+      timestamp: -1,
+    });
+    if (!latest) return res.status(404).json({ message: "No data found" });
+    res.json(latest);
+  } catch (err) {
+    console.error("Error fetching device data:", err.message);
+    res.status(500).json({ error: "Failed to fetch data" });
+  }
+});
+// *====================  DEVICE API  ====================== 
+
+
+// *==================== SNAPSHOTS API =====================
+// ✅ Serve snapshot images
+app.get("/api/snapshots/:imageName", (req, res) => {
+  try {
+    const imageName = req.params.imageName;
+    const rawMac = req.query.mac;
+    const macSuffix = rawMac.slice(9, 17).replace(/[: ]/g, "_"); // Gets characters 9-16 (0-indexed)
+
+    const imagePath = path.join(`C:/snaps/${macSuffix}`, imageName);
+
+    // Check if file exists
+    if (!fs.existsSync(imagePath)) {
+      return res.status(404).json({ error: "Image not found" });
+    }
+
+    // Send the image file
+    res.sendFile(imagePath);
+  } catch (err) {
+    console.error("Error reading snapshots:", err);
+    res.status(500).json({ error: "Failed to read snapshots" });
+  }
+});
+
+// ✅ Get list of available snapshots
+app.get("/api/snapshots", (req, res) => {
+  try {
+    const rawMac = req.query.mac;
+
+    // Validate MAC address exists
+    if (!rawMac) {
+      return res.status(400).json({ error: "MAC address is required" });
+    }
+
+
+    // Extract the last part of MAC 
+    const macSuffix = rawMac.slice(9, 17).replace(/[: ]/g, "_"); // Gets characters 9-16 (0-indexed)
+    // console.log("MAC ADDRESS: ", macSuffix);
+
+    const snapshotsDir = `C:/Snaps/${macSuffix}`;
+
+    const files = fs
+      .readdirSync(snapshotsDir)
+      .filter((file) => /\.(jpg|jpeg|png|gif)$/i.test(file))
+      // Sorting images in descending order based on timestamp in filename
+      .sort((a, b) => {
+        // Extract YYMMDDHHMMSS format for comparison
+        const getKey = (filename) => {
+          const match = filename.match(/_(\d{2})_(\d{2})_(\d{2})_(\d{2}f)_(\d{2})_(\d{2})\./);
+          return match ? match[3] + match[2] + match[1] + match[4] + match[5] + match[6] : '0';
+        };
+        return getKey(b).localeCompare(getKey(a));
+      })
+      .slice(0, 15); // Get last 15 images
+
+    // console.log("FILES: ", files);
+
+    res.json(files);
+  } catch (err) {
+    console.error("Error reading snapshots:", err);
+    res.status(500).json({ error: "Failed to read snapshots" });
+  }
+});
+// *==================== SNAPSHOTS API =====================
+
 
 // ✅ Command endpoint
 app.post("/command", (req, res) => {
@@ -344,24 +468,8 @@ app.post("/command", (req, res) => {
         .json({ message: `Error sending command to ${normalizedMac}` });
     }
     console.log(`Sent command "${command}" to ${normalizedMac}`);
-    res.json({ message: `Command sent to ${normalizedMac}` });
+    res.json({ message: `${command} sent to ${normalizedMac}` });
   });
-});
-
-// ✅ Get connected MACs
-app.get("/api/devices", (req, res) => {
-  res.json(Array.from(connectedDevices.keys()).map(mac => mac.toLowerCase())); //! Converting to LowerCase()
-});
-
-// ✅ Get only registered MACs
-app.get("/api/all-devices", async (req, res) => {
-  try {
-    const devices = await Device.find({}, "mac");
-    res.json(devices.map((d) => d.mac.toLowerCase())); //! Converting to LowerCase()
-  } catch (error) {
-    console.error("Error fetching registered devices:", error);
-    res.status(500).json({ error: "Failed to fetch devices" });
-  }
 });
 
 // ✅ Get last 100 readings
@@ -377,21 +485,6 @@ app.get("/api/readings", async (req, res) => {
   }
 });
 
-// ✅ Get latest reading by MAC
-app.get("/api/device/:mac", async (req, res) => {
-  try {
-    const normalizedMac = req.params.mac.toLowerCase(); //! Converting to LowerCase()
-    const latest = await SensorReading.findOne({ mac: normalizedMac }).sort({
-      timestamp: -1,
-    });
-    if (!latest) return res.status(404).json({ message: "No data found" });
-    res.json(latest);
-  } catch (err) {
-    console.error("Error fetching device data:", err.message);
-    res.status(500).json({ error: "Failed to fetch data" });
-  }
-});
-
 // ✅ Get logs saved in PC
 app.post("/api/log-command", (req, res) => {
   console.log("Log API Called");
@@ -402,7 +495,7 @@ app.post("/api/log-command", (req, res) => {
   const now = new Date();
   const fileName = `${now.getDate()}_${now.getMonth() + 1
     }_${now.getHours()}.out`;
-  const logDir = "/home/techno/CommandLogs/out";
+  const logDir = "../../CommandLogs/out";
 
   if (!fs.existsSync(logDir)) {
     fs.mkdirSync(logDir, { recursive: true });
@@ -410,7 +503,7 @@ app.post("/api/log-command", (req, res) => {
 
   const filePath = path.join(logDir, fileName);
   const timestamp = now.toLocaleString();
-  const logEntry = `[${timestamp}] | MAC:${mac} | ${status}  | COMMAND:"${command}" | MESSAGE:"${message}"\n`;
+  const logEntry = `[${timestamp}]Sys:${slicedMAC} | ${status} | COMMAND:"${command}"\n`;
 
   // ✅ Send response immediately, log in background
   res.json({ message: "Log received" });
@@ -453,104 +546,17 @@ app.get("/api/historical-data", async (req, res) => {
   }
 });
 
-// ✅ Serve snapshot images
-app.get("/api/snapshots/:imageName", (req, res) => {
-  const imageName = req.params.imageName;
-  const imagePath = path.join("/home/techno/Pictures", imageName);
+// ✅ Debug routes
+app.use('/debug', require('./auth/debug'));
 
-  // Check if file exists
-  if (!fs.existsSync(imagePath)) {
-    return res.status(404).json({ error: "Image not found" });
-  }
-
-  // Send the image file
-  res.sendFile(imagePath);
-});
-
-// ✅ Get list of available snapshots
-app.get("/api/snapshots", (req, res) => {
-  const snapshotsDir = "/home/techno/Pictures";
-
-  try {
-    const files = fs
-      .readdirSync(snapshotsDir)
-      .filter((file) => /\.(jpg|jpeg|png|gif)$/i.test(file))
-      .sort()
-      .slice(-15); // Get last 15 images
-
-    res.json(files);
-  } catch (err) {
-    console.error("Error reading snapshots:", err);
-    res.status(500).json({ error: "Failed to read snapshots" });
-  }
-});
-
-app.get("/api/thresholds", (req, res) => {
-  res.json(thresholds);
-});
-
-app.get("/api/debug/stats", (req, res) => {
-  res.json(debug.stats());
-});
-
-app.get("/api/debug/health", (req, res) => {
-  res.json(debug.healthCheck());
-});
-
-app.post("/api/debug/toggle", (req, res) => {
-  debug.enabled = !debug.enabled;
-  res.json({
-    enabled: debug.enabled,
-    message: `Debug ${debug.enabled ? 'enabled' : 'disabled'}`,
-    timestamp: getFormattedDateTime()
-  });
-});
-
-app.post("/api/debug/connected-devices", (req, res) => {
-  const devices = Array.from(connectedDevices.entries().map(([mac, socket]) => ({
-    mac: mac.toLowerCase(), //! Converting to LowerCase()
-    connected: !socket.destroyed,
-    remoteAddress: socket.remoteAddress,
-    remotePort: socket.remotePort,
-    lastSeen: getFormattedDateTime()
-  })));
-
-  res.json(devices);
-});
-
-app.post("/api/debug/reset-counters", (req, res) => {
-  debug.errorCount = 0;
-  debug.packetCount = 0;
-  debug.bufferStats.malformedPackets = 0;
-  debug.bufferStats.discardedBytes = 0;
-  debug.bufferStats.totalBytes = 0;
-  debug.lastPacketTime = null;
-
-  res.json({
-    message: "All counters reset",
-    resetTime: getFormattedDateTime()
-  });
-});
-
-app.get("/api/debug/packet-stream", (req, res) => {
-  res.json({
-    currentTime: getFormattedDateTime(),
-    totalPackets: debug.packetCount,
-    lastPacketTime: debug.lastPacketTime ? getFormattedDateTime(new Date(debug.lastPacketTime)) : "Never",
-    activeConnections: connectedDevices.size,
-    bufferStatus: {
-      currentBufferSize: readingBuffer.length,
-      maxBufferSize: BULK_SAVE_LIMIT
-    }
-  });
-});
 
 // 📡 TCP Server
 const BULK_SAVE_LIMIT = 1000;
 let readingBuffer = [];
 let alreadyReplied = 0;
 
-function getFormattedDateTime() {
+function getFormattedDateTime(outType = 'string') {
+  // Pass any string to function if you want output in second way
   const today = new Date();
   const pad = (n) => String(n).padStart(2, "0");
   const dd = pad(today.getDate());
@@ -559,7 +565,12 @@ function getFormattedDateTime() {
   const HH = pad(today.getHours());
   const MM = pad(today.getMinutes());
   const SS = pad(today.getSeconds());
-  return `${dd}/${mm}/${yy} ${HH}:${MM}:${SS}`;
+
+  if (outType === 'string') {
+    return `${dd}/${mm}/${yy} ${HH}:${MM}:${SS}`;
+  } else {
+    return `${dd}_${mm}_${yy}_${HH}_${MM}_${SS}`;
+  }
 }
 function sendX(socket) {
   const msg = `%X000${getFormattedDateTime()}$`;
@@ -830,6 +841,8 @@ const server = net.createServer((socket) => {
                   })
                 } */
 
+        const slicedMAC = mac.slice(9, 17).replace(/[: ]/g, '_')
+        
         // Camera click if 'C' received
         if ((padding === 0x43) && (doorStatus === "OPEN")) {
         // if (true) {
@@ -963,7 +976,7 @@ const server = net.createServer((socket) => {
         for (let i = 0; i < 6; i++) {
           fanStatus[i] = (fanStatusBits >> (i * 2)) & 0x03; // 0=off, 1=healthy, 2=faulty
         }
-        console.log("fanStatus", fanStatus);
+        // console.log("fanStatus", fanStatus);
 
         const fanFailBits = buffer.readUInt32LE(54); // <-- Critical offset //Password
         const floats = [
