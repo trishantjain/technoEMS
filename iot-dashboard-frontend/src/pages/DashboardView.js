@@ -372,12 +372,15 @@ function DashboardView() {
     }));
 
 
-  const fetchSnapshots = async () => {
+  const fetchSnapshots = async (selectedMac) => {
     try {
+      setActiveTab("snapshots");
       const response = await fetch(
-        `${process.env.REACT_APP_API_URL}/api/snapshots`
+        `${process.env.REACT_APP_API_URL}/api/snapshots/?mac=${selectedMac}`
       );
+      console.log("Fetching snapshots for MAC:", selectedMac);
       const snapshotFiles = await response.json();
+      console.log("SNAPSHOTS: ", response);
       setSnapshots(snapshotFiles);
     } catch (err) {
       console.error("Error fetching snapshots:", err);
@@ -387,14 +390,14 @@ function DashboardView() {
 
   // Fetch snapshots on component mount
   useEffect(() => {
-    fetchSnapshots();
-
+    fetchSnapshots(selectedMac);
+    console.log(snapshots);
     const snapshotInterval = setInterval(() => {
-      fetchSnapshots();
-    }, 10000); // ✅ Set up timer
+      fetchSnapshots(selectedMac);
+    }, 240000); // ✅ Set up timer
 
     return () => clearInterval(snapshotInterval); // ✅ Cleanup
-  }, []);
+  }, [selectedMac]);
 
   const alarmKeys = [
     {
@@ -468,7 +471,7 @@ function DashboardView() {
                 </button>
                 <button
                   className={activeTab === "snapshots" ? "active" : ""}
-                  onClick={() => setActiveTab("snapshots")}
+                  onClick={() => fetchSnapshots(selectedMac)}
                 >
                   Snapshots
                 </button>
@@ -498,14 +501,14 @@ function DashboardView() {
                     alarm={latestReading.humidityAlarm}
                   />
                   <Gauge
-                    label="HUPS O/P"
+                    label="Input Volt"
                     value={latestReading.inputVoltage}
                     max={5}
                     color="#06d6a0"
                     alarm={latestReading.inputVoltageAlarm}
                   />
                   <Gauge
-                    label="LoadCurrent"
+                    label="Output Volt"
                     value={latestReading.outputVoltage}
                     max={5}
                     color="#118ab2"
@@ -534,14 +537,14 @@ function DashboardView() {
                   />
                   {latestReading.batteryBackup <= 10 ?
                     <Gauge
-                      label="LockBat(Hours)"
+                      label="LockBat(Left Hours)"
                       value="0"
                       max={16}
                       color="#ffc107"
                       alarm={latestReading.inputVoltageAlarm * 1.2}
                     /> :
                     <Gauge
-                      label="LockBat(Hours)"
+                      label="LockBat(Left Hours)"
                       value={((latestReading.batteryBackup - 10) * 4).toFixed(2)}
                       max={16}
                       color="#ffc107"
@@ -663,7 +666,7 @@ function DashboardView() {
                           onClick={() => handleFanClick(level)}
                         />
                         <div className="fan-label">
-                          {level >= 1 && level <= 4 ? `FG ${level}` : "LOAD"}
+                          {level >= 1 && level <= 4 ? `FG ${level}` : "NON-CRITICAL LOAD"}
                         </div>
                       </div>
                     ))}
@@ -780,13 +783,13 @@ function DashboardView() {
                           className="snapshot-item"
                           onClick={() =>
                             setSelectedImage(
-                              `${process.env.REACT_APP_API_URL}/api/snapshots/${filename}`
+                              `${process.env.REACT_APP_API_URL}/api/snapshots/${filename}?mac=${selectedMac}`
                             )
                           }
                         >
                           <img
                             key={i}
-                            src={`${process.env.REACT_APP_API_URL}/api/snapshots/${filename}`}
+                            src={`${process.env.REACT_APP_API_URL}/api/snapshots/${filename}?mac=${selectedMac}`}
                             alt={`snapshot-${i + 1}`}
                             onError={(e) => {
                               e.target.src =
@@ -896,7 +899,7 @@ function DashboardView() {
               return deviceMeta.map((device) => {
                 const mac = device.mac;
                 const reading = latestReadingsByMac[mac];
-                console.log("⚠️Reading", reading)
+                // console.log("⚠️Reading", reading)
                 let colorClass = "disconnected"; // default
 
                 if (reading && reading.timestamp) {
