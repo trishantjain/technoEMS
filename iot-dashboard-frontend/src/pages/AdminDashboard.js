@@ -630,11 +630,11 @@ const EditableRow = ({ device, onUpdated }) => {
           <input
             type="text"
             name="ipCamera"
-            value={formData.ipCamera}
+            value={formData.ipCamera.ip}
             onChange={handleChange}
           />
-        ) : device.ipCamera ? (
-          <a href={device.ipCamera} target="_blank" rel="noopener noreferrer">
+        ) : device.ipCamera.ip ? (
+          <a href={`https://${device.ipCamera.ip}`} target="_blank" rel="noopener noreferrer">
             📷 View
           </a>
         ) : (
