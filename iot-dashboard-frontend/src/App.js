@@ -2,10 +2,12 @@ import React, { useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Login from './pages/Login';
 import DashboardView from './pages/DashboardView';
+import DashboardViewV2 from './pages/DashboardViewV2';
 import AdminDashboard from './pages/AdminDashboard';
 import PrivateRoute from './components/PrivateRoute';
 import OfflinePrompt from './components/OfflinePrompt';
-import DashboardTest from './pages/DashboardTest';
+
+const API = "/api";
 
 function App() {
   const [offlinePrompt, setOfflinePrompt] = useState(false);
@@ -13,7 +15,7 @@ function App() {
   useEffect(() => {
     const checkConnection = async () => {
       try {
-        const res = await fetch(`${process.env.REACT_APP_API_URL}/ping`, { method: 'GET' });
+        const res = await fetch(`${API}/ping`, { method: 'GET' });
         if (!res.ok) throw new Error('Offline');
         setOfflinePrompt(false);
       } catch (err) {
@@ -41,10 +43,13 @@ function App() {
             </PrivateRoute>
           }
         />
+
         <Route
-          path="/dashboard_test"
+          path="/dashboard-v2"
           element={
-            <DashboardTest />
+            <PrivateRoute allowedRoles={['user', 'block', 'gp']}>
+              <DashboardViewV2 />
+            </PrivateRoute>
           }
         />
 

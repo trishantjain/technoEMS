@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <title>IoT Simulator Control</title>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f5f5f5;
+            padding: 20px;
+        }
+
+        .card {
+            background: #fff;
+            padding: 16px;
+            border-radius: 8px;
+            max-width: 420px;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .row {
+            margin-bottom: 14px;
+            display: block;
+        }
+
+        label {
+            display: block;
+            font-weight: bold;
+            margin-bottom: 6px;
+        }
+
+        input[type="range"] {
+            width: 100%;
+        }
+
+        .value {
+            font-size: 14px;
+            color: #555;
+        }
+
+        .status {
+            margin-top: 10px;
+            font-size: 13px;
+        }
+
+        select {
+            width: 100%;
+            padding: 6px;
+        }
+
+        .line {
+            display: inline-block;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="card">
+        <h2>IoT Simulator Control</h2>
+
+        <!-- Mode -->
+        <div class="row">
+            <label for="mode">Mode</label>
+            <select id="mode">
+                <option value="manual">Manual</option>
+                <option value="random">Random</option>
+            </select>
+        </div>
+
+        <!-- Temperature -->
+        <div class="row">
+            <label for="insideTemperature">Inside Temperature (°C)</label>
+            <input type="range" id="insideTemperature" min="0" max="100" value="25">
+            <div class="value">Value: <span id="insideTempVal">25</span></div>
+        </div>
+
+        <div class="row">
+            <label for="outsideTemperature">Outside Temperature (°C)</label>
+            <input type="range" id="outsideTemperature" min="0" max="100" value="25">
+            <div class="value">Value: <span id="outsideTempVal">25</span></div>
+        </div>
+
+        <!-- Humidity -->
+        <div class="row">
+            <label for="humidity">Humidity (%)</label>
+            <input type="range" id="humidity" min="0" max="100" value="60">
+            <div class="value">Value: <span id="humVal">60</span></div>
+        </div>
+
+        <div class="row">
+            <label for="outputVoltage">Output Voltage (V)</label>
+            <input type="range" id="outputVoltage" min="0" max="100" value="60">
+            <div class="value">Value: <span id="outputVoltageVal">60</span></div>
+        </div>
+
+        <div class="row">
+            <label for="inputVoltage">Input Voltage (V)</label>
+            <input type="range" id="inputVoltage" min="0" max="100" value="60">
+            <div class="value">Value: <span id="inputVoltageVal">60</span></div>
+        </div>
+
+        <div class="row">
+            <label for="fireAlarm">Fire Alarm</label>
+            <input type="checkbox" id="fireAlarm">
+        </div>
+        <div class="row">
+            <label for="leakage">Leakage</label>
+            <input type="checkbox" id="leakage">
+        </div>
+        <div class="row">
+            <label for="logging">Logging</label>
+            <input type="checkbox" id="logging">
+        </div>
+        <div class="row">
+            <label for="door">Door</label>
+            <input type="checkbox" id="door">
+        </div>
+        <div class="row">
+            <label for="lock">Lock</label>
+            <input type="checkbox" id="lock">
+        </div>
+        <div class="row">
+            <label for="password">Password</label>
+            <input type="checkbox" id="password">
+        </div>
+        <div class="row">
+            <div class="line">
+                <label for="fan1">Fan1</label>
+                <input type="checkbox" id="fan1">
+            </div>
+            <div class="line">
+                <label for="fan2">Fan2</label>
+                <input type="checkbox" id="fan2">
+            </div>
+            <div class="line">
+                <label for="fan3">Fan3</label>
+                <input type="checkbox" id="fan3">
+            </div>
+            <div class="line">
+                <label for="fan4">Fan4</label>
+                <input type="checkbox" id="fan4">
+            </div>
+            <div class="line">
+                <label for="fan5">Fan5</label>
+                <input type="checkbox" id="fan5">
+            </div>
+            <div class="line">
+                <label for="fan6">Fan6</label>
+                <input type="checkbox" id="fan6">
+            </div>
+        </div>
+
+        <div class="status" id="status">🔴 Disconnected</div>
+    </div>
+
+    <script>
+        const statusEl = document.getElementById("status");
+        const insideTempInput = document.getElementById("insideTemperature");
+        const outsideTempInput = document.getElementById("outsideTemperature");
+        const humidityInput = document.getElementById("humidity");
+        const outputVoltageInput = document.getElementById("outputVoltage");
+        const inputVoltageInput = document.getElementById("inputVoltage");
+        const modeSelect = document.getElementById("mode");
+
+        const insideTempVal = document.getElementById("insideTempVal");
+        const outsideTempVal = document.getElementById("outsideTempVal");
+        const outputVoltageVal = document.getElementById("outputVoltageVal");
+        const inputVoltageVal = document.getElementById("inputVoltageVal");
+        const humVal = document.getElementById("humVal");
+
+        const fireAlarmInput = document.getElementById("fireAlarm");
+        const leakageInput = document.getElementById("leakage");
+        const loggingInput = document.getElementById("logging");
+        const doorInput = document.getElementById("door");
+        const lockInput = document.getElementById("lock");
+        const passwordInput = document.getElementById("password");
+        const fan1Input = document.getElementById("fan1");
+        const fan2Input = document.getElementById("fan2");
+        const fan3Input = document.getElementById("fan3");
+        const fan4Input = document.getElementById("fan4");
+        const fan5Input = document.getElementById("fan5");
+        const fan6Input = document.getElementById("fan6");
+
+        const fireAlarmVal = document.getElementById("fireAlarmVal");
+        const leakageVal = document.getElementById("leakageVal");
+        const loggingVal = document.getElementById("loggingVal");
+        const doorVal = document.getElementById("doorVal");
+        const lockVal = document.getElementById("lockVal");
+        const fan1Val = document.getElementById("fan1Val");
+
+        // Connect to simulator WebSocket
+        const ws = new WebSocket("ws://localhost:8090");
+
+        ws.onopen = () => {
+            statusEl.textContent = "🟢 Connected to Simulator";
+        };
+
+        ws.onclose = () => {
+            statusEl.textContent = "🔴 Disconnected";
+        };
+
+        ws.onmessage = (event) => {
+            const state = JSON.parse(event.data);
+
+            if (state.insideTemperature !== undefined) {
+                insideTempInput.value = state.insideTemperature;
+                insideTempVal.textContent = state.insideTemperature;
+            }
+
+            if (state.outsideTemperature !== undefined) {
+                outsideTempInput.value = state.outsideTemperature;
+                outsideTempVal.textContent = state.outsideTemperature;
+            }
+
+            if (state.humidity !== undefined) {
+                humidityInput.value = state.humidity;
+                humVal.textContent = state.humidity;
+            }
+
+            if (state.inputVoltage !== undefined) {
+                inputVoltageInput.value = state.inputVoltage;
+                inputVoltageVal.textContent = state.inputVoltage;
+            }
+            if (state.outputVoltage !== undefined) {
+                outputVoltageInput.value = state.outputVoltage;
+                outputVoltageVal.textContent = state.outputVoltage;
+            }
+
+            if (state.fireAlarm !== undefined) {
+                fireAlarmInput.checked = state.fireAlarm;
+            }
+
+            if (state.leakage !== undefined) {
+                leakageInput.checked = state.leakage;
+            }
+
+            if (state.logging !== undefined) {
+                loggingInput.checked = state.logging;
+            }
+
+            if (state.door !== undefined) {
+                doorInput.checked = state.door;
+            }
+
+            if (state.lock !== undefined) {
+                lockInput.checked = state.lock;
+            }
+
+            if (state.password !== undefined) {
+                passwordInput.checked = state.password;
+            }
+
+            if (state.fan1 !== undefined) {
+                fan1Input.checked = Number(state.fan1) === 2 || state.fan1 === true;
+            }
+
+            if (state.fan2 !== undefined) {
+                fan2Input.checked = Number(state.fan2) === 2 || state.fan2 === true;
+            }
+
+            if (state.fan3 !== undefined) {
+                fan3Input.checked = Number(state.fan3) === 2 || state.fan3 === true;
+            }
+
+            if (state.fan4 !== undefined) {
+                fan4Input.checked = Number(state.fan4) === 2 || state.fan4 === true;
+            }
+
+            if (state.fan5 !== undefined) {
+                fan5Input.checked = Number(state.fan5) === 2 || state.fan5 === true;
+            }
+
+            if (state.fan6 !== undefined) {
+                fan6Input.checked = Number(state.fan6) === 2 || state.fan6 === true;
+            }
+
+            if (state.mode) {
+                modeSelect.value = state.mode;
+            }
+        };
+
+        function sendUpdate(data) {
+            if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify(data));
+            }
+        }
+
+        insideTempInput.addEventListener("input", (e) => {
+            insideTempVal.textContent = e.target.value;
+            sendUpdate({ insideTemperature: Number(e.target.value) });
+        });
+
+        outsideTempInput.addEventListener("input", (e) => {
+            outsideTempVal.textContent = e.target.value;
+            sendUpdate({ outsideTemperature: Number(e.target.value) });
+        });
+
+        humidityInput.addEventListener("input", (e) => {
+            humVal.textContent = e.target.value;
+            sendUpdate({ humidity: Number(e.target.value) });
+        });
+
+        inputVoltageInput.addEventListener("input", (e) => {
+            inputVoltageVal.textContent = e.target.value;
+            sendUpdate({ inputVoltage: Number(e.target.value) });
+        });
+
+        outputVoltageInput.addEventListener("input", (e) => {
+            outputVoltageVal.textContent = e.target.value;
+            sendUpdate({ outputVoltage: Number(e.target.value) });
+        });
+
+        fireAlarmInput.addEventListener("change", (e) => {
+            sendUpdate({ fireAlarm: e.target.checked });
+        });
+
+        leakageInput.addEventListener("change", (e) => {
+            sendUpdate({ leakage: e.target.checked });
+        });
+
+        loggingInput.addEventListener("change", (e) => {
+            sendUpdate({ logging: e.target.checked });
+        });
+
+        doorInput.addEventListener("change", (e) => {
+            sendUpdate({ door: e.target.checked });
+        });
+
+        lockInput.addEventListener("change", (e) => {
+            sendUpdate({ lock: e.target.checked });
+        });
+
+        passwordInput.addEventListener("change", (e) => {
+            sendUpdate({ password: e.target.checked });
+        });
+
+        fan1Input.addEventListener("change", (e) => {
+            sendUpdate({ fan1: e.target.checked });
+        });
+
+        fan2Input.addEventListener("change", (e) => {
+            sendUpdate({ fan2: e.target.checked });
+        });
+
+        fan3Input.addEventListener("change", (e) => {
+            sendUpdate({ fan3: e.target.checked });
+        });
+
+        fan4Input.addEventListener("change", (e) => {
+            sendUpdate({ fan4: e.target.checked });
+        });
+
+        fan5Input.addEventListener("change", (e) => {
+            sendUpdate({ fan5: e.target.checked });
+        });
+
+        fan6Input.addEventListener("change", (e) => {
+            sendUpdate({ fan6: e.target.checked });
+        });
+
+        modeSelect.addEventListener("change", (e) => {
+            sendUpdate({ mode: e.target.value });
+        });
+
+        
+    </script>
+
+</body>
+
+</html>
