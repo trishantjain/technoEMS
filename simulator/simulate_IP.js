@@ -6,10 +6,11 @@ const fs = require('fs');
 // const { connected } = require('process');
 const WebSocket = require('ws');
 
+const args = process.argv;
 
-// const TOTAL_DEVICES = 5;
+// const TOTAL_DEVICES = 156;
 // const TOTAL_DEVICES = process.env.TOTAL_DEVICES;
-const TOTAL_DEVICES = 100;
+const TOTAL_DEVICES = Number(args[2]) || 100;
 const devices = [];
 let csvData = [];
 let currentSecond = 0;
@@ -35,7 +36,7 @@ const simulatorState = {
   fan4: false,
   fan5: false,
   fan6: false,
-  mode: "manual"
+  mode: "random"
 }
 
 // 🔥 PRE-INDEXING: Fast lookup structure
@@ -312,7 +313,7 @@ function sendPacketForRow(client, row, mac, index) {
 function startDevice(mac, index) {
   try {
     // const client = net.createConnection({ host: '98.88.250.83', port: 4000 });
-    const client = net.createConnection({ host: 'localhost', port: 4000 });
+    const client = net.createConnection({ host: '0.0.0.0', port: 4000 });
     console.log("Client connected", mac);
 
     // 🔧 NEW: Store this device in our connected devices map
