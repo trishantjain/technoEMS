@@ -8,15 +8,27 @@ const api = "/api";
 const RegisterDevice = () => {
     const navigate = useNavigate();
 
+    // const [form, setForm] = useState({
+    //     ip: "",
+    //     locationId: "",
+    //     address: "",
+    //     latitude: "",
+    //     longitude: "",
+    //     ipCameraMake: "",
+    //     ipCameraIp: "",
+    // });
+
     const [form, setForm] = useState({
-        mac: "",
-        locationId: "",
+        ip: "",
+        deviceName: "",
+        location: "",
         address: "",
         latitude: "",
         longitude: "",
         ipCameraMake: "",
         ipCameraIp: "",
     });
+
 
     const [status, setStatus] = useState("");
     const [showScanner, setShowScanner] = useState(false);
@@ -35,8 +47,9 @@ const RegisterDevice = () => {
                     Authorization: `Bearer ${token}`
                 },
                 body: JSON.stringify({
-                    mac: form.mac.trim(),
-                    locationId: form.locationId,
+                    ip: form.ip.trim(),
+                    deviceName: form.deviceName,
+                    location: form.location,
                     address: form.address,
                     latitude: +form.latitude,
                     longitude: +form.longitude,
@@ -53,8 +66,9 @@ const RegisterDevice = () => {
             setStatus("✅ Device registered");
 
             setForm({
-                mac: "",
-                locationId: "",
+                ip: "",
+                deviceName: "",
+                location: "",
                 address: "",
                 latitude: "",
                 longitude: "",
@@ -74,19 +88,19 @@ const RegisterDevice = () => {
                 <input
                     className="full-width"
                     placeholder="IP Address"
-                    value={form.mac}
+                    value={form.ip}
                     onChange={(e) =>
-                        setForm({ ...form, mac: e.target.value })
+                        setForm({ ...form, ip: e.target.value })
                     }
                     required
                 />
 
                 <div className="location-id-row">
                     <input
-                        placeholder="Location ID"
-                        value={form.locationId}
+                        placeholder="Device Name"
+                        value={form.deviceName}
                         onChange={(e) =>
-                            setForm({ ...form, locationId: e.target.value })
+                            setForm({ ...form, deviceName: e.target.value })
                         }
                         required
                     />
@@ -95,6 +109,19 @@ const RegisterDevice = () => {
                         📷
                     </button>
                 </div>
+
+                <select
+                    value={form.location}
+                    onChange={(e) =>
+                        setForm({ ...form, location: e.target.value })
+                    }
+                >
+                    <option value="" disabled>
+                        Select location
+                    </option>
+                    <option value="GP">GP</option>
+                    <option value="BLOCK">BLOCK</option>
+                </select>
 
                 <input
                     placeholder="Address"
@@ -123,23 +150,23 @@ const RegisterDevice = () => {
                     required
                 />
 
-                <input
+                {/* <input
                     placeholder="Camera Make"
                     value={form.ipCameraMake}
                     onChange={(e) =>
                         setForm({ ...form, ipCameraMake: e.target.value })
                     }
                     // required
-                />
+                /> */}
 
-                <input
+                {/* <input
                     placeholder="Camera IP"
                     value={form.ipCameraIp}
                     onChange={(e) =>
                         setForm({ ...form, ipCameraIp: e.target.value })
                     }
                     // required
-                />
+                /> */}
 
                 <button type="submit">Register Device</button>
 
@@ -149,7 +176,7 @@ const RegisterDevice = () => {
             {showScanner && (
                 <Scanner
                     onScan={(value) => {
-                        setForm((prev) => ({ ...prev, locationId: value }));
+                        setForm((prev) => ({ ...prev, location: value }));
                         setShowScanner(false);
                     }}
                     onClose={() => setShowScanner(false)}

@@ -14,6 +14,7 @@ import { API } from "../config/api.js";
 import PasswordPrompt from "../components/PasswordPrompt.jsx";
 import { useNavigate } from "react-router-dom";
 
+
 const STALE_THRESHOLD_MS = 30000; // 30 seconds
 
 const LOG_STORAGE_KEY = "tt.logsByMac.v1";
@@ -42,6 +43,8 @@ function DashboardView() {
   const [snapshots, setSnapshots] = useState([]);
   const [selectedImage, setSelectedImage] = useState(null);
   const [selectedDevice, setSelectedDevice] = useState("");
+
+  const [dashboardMode, setDashboardMode] = useState("monitoring");
 
   const selectedMacRef = useRef("");
   // const deviceStatusRef = useRef({});
@@ -91,7 +94,7 @@ function DashboardView() {
       // Parsing JSON
       const parsed = JSON.parse(raw);
       const lastResetAt = Number(parsed?.lastResetAt || 0);
-      // Logs by mac
+      // Logs by ip
       const stored = parsed?.logsByMac;
 
       // If Logs are not correct || not present
@@ -144,15 +147,15 @@ function DashboardView() {
   //Map and marker refs
   const mapRef = useRef(null);
   // const markerRefs = useRef({});
-  // const isFetchingRef = useRef(false); // TIMING TESTING
+  const isFetchingRef = useRef(false); // TIMING TESTING
 
 
 
   // const latestReadingsByMac = {};
   // readings.forEach((r) => {
-  //   const existing = latestReadingsByMac[r.mac];
+  //   const existing = latestReadingsByMac[r.ip];
   //   if (!existing || new Date(r.timestamp) > new Date(existing.timestamp)) {
-  //     latestReadingsByMac[r.mac] = r;
+  //     latestReadingsByMac[r.ip] = r;
   //   }
   // });
 
@@ -160,9 +163,9 @@ function DashboardView() {
   const latestReadingsByMac = useMemo(() => {
     const map = {};
     for (const r of readings) {
-      const existing = map[r.mac];
+      const existing = map[r.ip];
       if (!existing || new Date(r.timestamp) > new Date(existing.timestamp)) {
-        map[r.mac] = r;
+        map[r.ip] = r;
       }
     }
     return map;
@@ -175,8 +178,8 @@ function DashboardView() {
     let disconnected = 0;
 
     // let count = 0;
-    for (const mac in deviceStatusMap) {
-      const status = deviceStatusMap[mac];
+    for (const ip in deviceStatusMap) {
+      const status = deviceStatusMap[ip];
 
       if (status === "connected") connected++;
       else if (status === "status-alarm") statusAlarm++;
@@ -196,9 +199,9 @@ function DashboardView() {
 
   // const frontendAlarmsByMac = useMemo(() => {
   //   const map = {};
-  //   for (const mac in latestReadingsByMac) {
-  //     map[mac] = alarmComputation(
-  //       latestReadingsByMac[mac],
+  //   for (const ip in latestReadingsByMac) {
+  //     map[ip] = alarmComputation(
+  //       latestReadingsByMac[ip],
   //       thresholds
   //     );
   //   }
@@ -206,8 +209,8 @@ function DashboardView() {
   // }, [latestReadingsByMac]);
 
 
-  // const selectedDeviceMeta = deviceMeta.find((d) => d.mac === selectedMac);
-  // const latestReading = readings.find((r) => r.mac === selectedMac);
+  // const selectedDeviceMeta = deviceMeta.find((d) => d.ip === selectedMac);
+  // const latestReading = readings.find((r) => r.ip === selectedMac);
   const latestReading = latestReadingsByMac[selectedMac];
 
   // UseEffect for fetching Data
@@ -226,10 +229,12 @@ function DashboardView() {
 
   }, []);
 
+
+
   // 🔄 Auto-focus map on selected device
   useEffect(() => {
     if (mapRef.current && selectedMac) {
-      const selectedDevice = deviceMeta.find((d) => d.mac === selectedMac);
+      const selectedDevice = deviceMeta.find((d) => d.ip === selectedMac);
       const lat = parseFloat(selectedDevice?.latitude);
       const lon = parseFloat(selectedDevice?.longitude);
       if (!isNaN(lat) && !isNaN(lon)) {
@@ -252,7 +257,7 @@ function DashboardView() {
     if (a.length !== b.length) return false;
 
     for (let i = 0; i < a.length; i++) {
-      if (a[i].mac !== b[i].mac) return false;
+      if (a[i].ip !== b[i].ip) return false;
     }
     return true;
   }
@@ -261,16 +266,42 @@ function DashboardView() {
 
   // FETCH DATA
   const fetchData = async () => {
+    if (isFetchingRef.current) {
+      console.warn("⚠️ Previous fetch still running");
+      return;
+    }
+
+    isFetchingRef.current = true;
+
     try {
       if (!hasLoadedOnceRef.current) {
         setLoadingDevices(true);
       }
 
-      const [readingsRes, devicesRes, deviceMetaRes] = await Promise.allSettled([
-        fetch(`${PAPI}/${API.readings}`),
-        fetch(`${PAPI}/${API.allDevices}`),
-        fetch(`${PAPI}/${API.deviceInfo}`),
-      ]);
+      const timedFetch = async (name, url) => {
+        const start = performance.now();
+
+        const res = await fetch(url);
+
+        console.log(
+          `${name}: ${(performance.now() - start).toFixed(1)} ms`
+        );
+
+        return res;
+      };
+
+      const [readingsRes, devicesRes, deviceMetaRes] =
+        await Promise.allSettled([
+          timedFetch("readings", `${PAPI}/${API.readings}`),
+          timedFetch("allDevices", `${PAPI}/${API.allDevices}`),
+          timedFetch("deviceInfo", `${PAPI}/${API.deviceInfo}`)
+        ]);
+
+      // const [readingsRes, devicesRes, deviceMetaRes] = await Promise.allSettled([
+      //   fetch(`${PAPI}/${API.readings}`),
+      //   fetch(`${PAPI}/${API.allDevices}`),
+      //   fetch(`${PAPI}/${API.deviceInfo}`),
+      // ]);
 
       // if (readingsRes.status === "fulfilled" && readingsRes.value.ok) {
       //   const readingsData = await readingsRes.value.json();
@@ -285,7 +316,7 @@ function DashboardView() {
         const isSame =
           prevReadingsRef.current.length === readingsData.length &&
           readingsData.every((r) => {
-            const prev = prevReadingsRef.current.find(p => p.mac === r.mac);
+            const prev = prevReadingsRef.current.find(p => p.ip === r.ip);
             return prev && prev.timestamp === r.timestamp;
           });
 
@@ -300,21 +331,21 @@ function DashboardView() {
           prevReadingsRef.current = readingsData;
 
           // 🔥 ADD THIS BLOCK (LOGGING HERE)
-          const mac = selectedMacRef.current;
-          if (mac) {
-            const reading = readingsData.find(r => r.mac === mac);
+          const ip = selectedMacRef.current;
+          if (ip) {
+            const reading = readingsData.find(r => r.ip === ip);
             if (reading) {
               const alarmResult = alarmComputation(reading, thresholds);
 
-              const entry = `[${new Date().toLocaleTimeString()}] [${mac}] ${alarmResult.alarms.join("| ")}`;
+              const entry = `[${new Date().toLocaleTimeString()}] [${ip}] ${alarmResult.alarms.join("| ")}`;
 
               setLogsByMac(prev => {
-                const prevLogs = prev[mac] || [];
+                const prevLogs = prev[ip] || [];
                 const nextLogs = [...prevLogs, entry].slice(-MAX_LOGS_PER_DEVICE);
 
                 return {
                   ...prev,
-                  [mac]: nextLogs
+                  [ip]: nextLogs
                 };
               });
 
@@ -327,10 +358,10 @@ function DashboardView() {
 
         // safe logging
         // console.log("DATA:", readingsData.map(r => ({
-        //   mac: r.mac,
+        //   ip: r.ip,
         //   ts: r.timestamp,
         //   temp: r.insideTemperature,
-        //   mac: r.mac,
+        //   ip: r.ip,
         //   fan1Status: r.fan1Status,
         //   fan2Status: r.fan2Status,
         //   fan3Status: r.fan3Status,
@@ -356,7 +387,7 @@ function DashboardView() {
           const next = Array.isArray(metadata) ? metadata : [];
 
           if (shallowEqualDevices(prev, next)) {
-            return prev; // ✅ KEEP SAME REFERENCE
+            return prev;
           }
           return next;
         });
@@ -368,6 +399,8 @@ function DashboardView() {
     } catch (err) {
       console.error("❌Error fetching data:", err);
     } finally {
+      isFetchingRef.current = false;
+
       if (!hasLoadedOnceRef.current) {
         setLoadingDevices(false);
         hasLoadedOnceRef.current = true;
@@ -384,8 +417,8 @@ function DashboardView() {
     return () => clearInterval(interval);
   }, []);
 
-  const handleSelectDevice = useCallback((mac, locationId) => {
-    setSelectedMac(mac);
+  const handleSelectDevice = useCallback((ip, locationId) => {
+    setSelectedMac(ip);
     setSelectedDevice(locationId);
   }, []);
 
@@ -394,7 +427,7 @@ function DashboardView() {
   const sendToLog = async (status, message, command = "") => {
     const logData = {
       date: new Date().toLocaleString(),
-      mac: selectedMac,
+      ip: selectedMac,
       command: command,
       status: status,
       message: message,
@@ -420,7 +453,7 @@ function DashboardView() {
       const res = await fetch(`/${API.sendCommandToDevice}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mac: selectedMac, command: cmdToSend }),
+        body: JSON.stringify({ ip: selectedMac, command: cmdToSend }),
       });
       const data = await res.json();
       setStatus(data.message);
@@ -644,15 +677,15 @@ function DashboardView() {
     // // let hasAnyChange = false;
 
     // for (const device of deviceMeta) {
-    //   const mac = device.mac;
-    //   const reading = latestReadingsByMac[mac];
+    //   const ip = device.ip;
+    //   const reading = latestReadingsByMac[ip];
 
     //   // COMPUTING DEVICE STATUS
     //   const newStatus = computeColor(reading, STALE_THRESHOLD_MS);
-    //   nextMap[mac] = newStatus;
+    //   nextMap[ip] = newStatus;
 
     //   // CHECKING PREVIOUS AND CURRENT DEVICE STATUS
-    //   if (prevMap[mac] !== newStatus) {
+    //   if (prevMap[ip] !== newStatus) {
     //     changed = true;
     //   }
     // }
@@ -683,13 +716,13 @@ function DashboardView() {
       const updated = { ...prev };
 
       for (const device of deviceMeta) {
-        const mac = device.mac;
-        const reading = latestReadingsByMac[mac];
+        const ip = device.ip;
+        const reading = latestReadingsByMac[ip];
 
         const newStatus = computeColor(reading, STALE_THRESHOLD_MS);
 
-        if (prev[mac] !== newStatus) {
-          updated[mac] = newStatus;
+        if (prev[ip] !== newStatus) {
+          updated[ip] = newStatus;
           hasChange = true;
         }
       }
@@ -706,29 +739,29 @@ function DashboardView() {
 
   // useEffect(() => {
   //   const interval = setInterval(() => {
-  //     const mac = selectedMacRef.current;
-  //     if (!mac) return;
+  //     const ip = selectedMacRef.current;
+  //     if (!ip) return;
 
-  //     const reading = latestReadingsByMacRef.current[mac];
+  //     const reading = latestReadingsByMacRef.current[ip];
   //     if (!reading) return;
 
   //     const alarmResult = alarmComputation(reading, thresholds);
   //     if (alarmResult.alarms.length === 0) return;
 
   //     const now = Date.now();
-  //     const lastAt = lastAlarmLogAtByMacRef.current[mac] || 0;
+  //     const lastAt = lastAlarmLogAtByMacRef.current[ip] || 0;
   //     if (now - lastAt < LOG_THROTTLE_MS) return;
 
-  //     lastAlarmLogAtByMacRef.current[mac] = now;
+  //     lastAlarmLogAtByMacRef.current[ip] = now;
 
   //     setLogsByMac(prev => {
-  //       const prevLogs = prev[mac] || [];
-  //       const entry = `[${new Date().toLocaleTimeString()}] [${mac}] ${alarmResult.alarms.join("| ")}`;
+  //       const prevLogs = prev[ip] || [];
+  //       const entry = `[${new Date().toLocaleTimeString()}] [${ip}] ${alarmResult.alarms.join("| ")}`;
   //       const nextLogs = [...prevLogs, entry].slice(-MAX_LOGS_PER_DEVICE);
 
   //       return {
   //         ...prev,
-  //         [mac]: nextLogs
+  //         [ip]: nextLogs
   //       };
   //     });
 
@@ -740,32 +773,32 @@ function DashboardView() {
 
   // useEffect(() => {
 
-  //   const mac = selectedMac;
-  //   if (!mac) return;
+  //   const ip = selectedMac;
+  //   if (!ip) return;
 
-  //   const reading = latestReadingsByMac[mac];
+  //   const reading = latestReadingsByMac[ip];
   //   if (!reading) return;
 
   //   const alarmResult = alarmComputation(reading, thresholds);
   //   if (alarmResult.alarms.length === 0) return;
 
   //   const now = Date.now();
-  //   const lastAt = lastAlarmLogAtByMacRef.current[mac] || 0;
+  //   const lastAt = lastAlarmLogAtByMacRef.current[ip] || 0;
 
   //   if (now - lastAt < LOG_THROTTLE_MS) return;
 
-  //   lastAlarmLogAtByMacRef.current[mac] = now;
+  //   lastAlarmLogAtByMacRef.current[ip] = now;
 
   //   setLogsByMac(prev => {
-  //     const prevLogs = prev[mac] || [];
+  //     const prevLogs = prev[ip] || [];
 
-  //     const entry = `[${new Date().toLocaleTimeString()}] [${mac}] ${alarmResult.alarms.join("| ")}`;
+  //     const entry = `[${new Date().toLocaleTimeString()}] [${ip}] ${alarmResult.alarms.join("| ")}`;
 
   //     const nextLogs = [...prevLogs, entry].slice(-MAX_LOGS_PER_DEVICE);
 
   //     return {
   //       ...prev,
-  //       [mac]: nextLogs
+  //       [ip]: nextLogs
   //     };
   //   });
 
@@ -776,7 +809,7 @@ function DashboardView() {
 
   // }, [latestReadingsByMac, selectedMac]);
 
-  // STOPPING LOGS FROM DELETING AT REFRESH
+  //* STOPPING LOGS FROM DELETING AT REFRESH
   useEffect(() => {
     if (persistTimerRef.current) {
       clearTimeout(persistTimerRef.current);
@@ -863,7 +896,7 @@ function DashboardView() {
   // const chartCutoffTime = Date.now() - CHART_DELAY_MS;
   // const historicalData = readings
 
-  //   .filter((r) => r.mac === selectedMac && r.timestamp)
+  //   .filter((r) => r.ip === selectedMac && r.timestamp)
   //   .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp)) // oldest to latest
   //   .slice(-15)
   //   .map((r) => {
@@ -888,7 +921,7 @@ function DashboardView() {
   // const historicalData = useMemo(() => {
   //   return readings
   //     .filter(r =>
-  //       r.mac === selectedMac &&
+  //       r.ip === selectedMac &&
   //       r.timestamp &&
   //       new Date(r.timestamp).getTime() <= chartCutoffTime
   //     )
@@ -904,7 +937,7 @@ function DashboardView() {
 
       // setActiveTab("snapshots");
       // if (selectedMac && activeTab === "snapshots") {
-      let response = await fetch(`/api/snapshots?mac=${selectedMac}`);
+      let response = await fetch(`/api/snapshots?ip=${selectedMac}`);
       const snapshotFiles = await response.json();
       setSnapshots(snapshotFiles);
       // } else {
@@ -945,15 +978,15 @@ function DashboardView() {
     const onSnapshot = (evt) => {
       try {
         const payload = JSON.parse(evt.data);
-        const mac = payload?.mac;
-        if (!mac) return;
+        const ip = payload?.ip;
+        if (!ip) return;
 
         swal.fire({
           toast: true,
           position: "top-end",
           icon: "success",
-          title: `Snapshot captured IP: ${mac}`,
-          // text: `MAC: ${mac}`,
+          title: `Snapshot captured IP: ${ip}`,
+          // text: `MAC: ${ip}`,
           timer: 10000,
           timerProgressBar: true,
           showConfirmButton: false,
@@ -964,7 +997,7 @@ function DashboardView() {
         });
 
         // If user is viewing the same device, refresh the snapshot list
-        if (String(selectedMacRef.current).toLowerCase() === String(mac).toLowerCase()) {
+        if (String(selectedMacRef.current).toLowerCase() === String(ip).toLowerCase()) {
           fetchSnapshots(selectedMacRef.current);
         }
       } catch {
@@ -991,7 +1024,7 @@ function DashboardView() {
     // Status filter
     if (statusFilter !== "all") {
       list = list.filter(device => {
-        const status = deviceStatusMap[device.mac] || "disconnected";
+        const status = deviceStatusMap[device.ip] || "disconnected";
         return status === statusFilter;
       });
     }
@@ -1002,7 +1035,7 @@ function DashboardView() {
 
       list = list.filter(device =>
         device.locationId?.toLowerCase().includes(lower) ||
-        device.mac?.toLowerCase().includes(lower)
+        device.ip?.toLowerCase().includes(lower)
       );
     }
 
@@ -1205,9 +1238,11 @@ function DashboardView() {
                               ? ""
                               : latestReading[alarm.key] === 87
                                 ? "wait"
-                                : latestReading[alarm.key]
-                                  ? "active"
-                                  : ""
+                                : latestReading[alarm.key] === 2
+                                  ? "smoke"
+                                  : latestReading[alarm.key]
+                                    ? "active"
+                                    : ""
                           )}`}
                         />
                         <div className="alarm-label">{alarm.Name}</div>
@@ -1345,7 +1380,7 @@ function DashboardView() {
                       {selectedImage.split("/").pop()} (
                       {snapshots.findIndex(
                         (img) =>
-                          `${PAPI}/snapshots/${img}?mac=${selectedMac}` ===
+                          `${PAPI}/snapshots/${img}?ip=${selectedMac}` ===
                           selectedImage
                       ) + 1}{" "}
                       of {snapshots.length})
@@ -1361,14 +1396,14 @@ function DashboardView() {
                           e.stopPropagation();
                           const currentIndex = snapshots.findIndex(
                             (img) =>
-                              `${PAPI}/snapshots/${img}?mac=${selectedMac}` ===
+                              `${PAPI}/snapshots/${img}?ip=${selectedMac}` ===
                               selectedImage
                           );
                           const prevIndex =
                             (currentIndex - 1 + snapshots.length) %
                             snapshots.length;
                           setSelectedImage(
-                            `${PAPI}/snapshots/${snapshots[prevIndex]}?mac=${selectedMac}`
+                            `${PAPI}/snapshots/${snapshots[prevIndex]}?ip=${selectedMac}`
                           );
                         }}
                       >
@@ -1380,13 +1415,13 @@ function DashboardView() {
                           e.stopPropagation();
                           const currentIndex = snapshots.findIndex(
                             (img) =>
-                              `${PAPI}/snapshots/${img}?mac=${selectedMac}` ===
+                              `${PAPI}/snapshots/${img}?ip=${selectedMac}` ===
                               selectedImage
                           );
                           const nextIndex =
                             (currentIndex + 1) % snapshots.length;
                           setSelectedImage(
-                            `${PAPI}/snapshots/${snapshots[nextIndex]}?mac=${selectedMac}`
+                            `${PAPI}/snapshots/${snapshots[nextIndex]}?ip=${selectedMac}`
                           );
                         }}
                       >
@@ -1417,13 +1452,13 @@ function DashboardView() {
                           className="snapshot-item"
                           onClick={() =>
                             setSelectedImage(
-                              `${PAPI}/snapshots/${filename}?mac=${selectedMac}`
+                              `${PAPI}/snapshots/${filename}?ip=${selectedMac}`
                             )
                           }
                         >
                           <img
                             key={i}
-                            src={`${PAPI}/snapshots/${filename}?mac=${selectedMac}`}
+                            src={`${PAPI}/snapshots/${filename}?ip=${selectedMac}`}
                             alt={`snapshot-${i + 1}`}
                             onError={(e) => {
                               e.target.src =

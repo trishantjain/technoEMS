@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import Spinner from "../../components/Spinner";
 import { useNavigate } from "react-router-dom";
 import { API } from "../../config/api";
+import PasswordPrompt from "../../components/PasswordPrompt";
 
 const api = "/api";
 
@@ -35,9 +36,14 @@ const RegisteredDevices = () => {
                 }
             });
             const data = await res.json();
-            setDeviceList(data);
+
+            console.log("Data: ", data);
+
+            // setDeviceList(data);
+            setDeviceList(Array.isArray(data) ? data : []);
         } catch (err) {
             console.error("Failed to fetch devices:", err);
+            setDeviceList([]);
         } finally {
             if (showLoader) setLoadingDevices(false);
         }
@@ -46,14 +52,14 @@ const RegisteredDevices = () => {
     const handleDeviceUpdated = (updatedDevice) => {
         setDeviceList((prevDevices) =>
             prevDevices.map((dev) =>
-                dev.mac === updatedDevice.mac ? { ...updatedDevice } : dev
+                dev.ip === updatedDevice.ip ? { ...updatedDevice } : dev
             )
         );
     };
 
-    const handleDeviceDeleted = (mac) => {
+    const handleDeviceDeleted = (ip) => {
         setDeviceList((prevDevices) =>
-            prevDevices.filter((dev) => dev.mac !== mac)
+            prevDevices.filter((dev) => dev.ip !== ip)
         );
     };
 
@@ -61,9 +67,11 @@ const RegisteredDevices = () => {
         const term = searchTerm.toLowerCase();
 
         const matchesSearch =
-            device.mac?.toLowerCase().includes(term) ||
-            device.locationId?.toLowerCase().includes(term) ||
-            device.address?.toLowerCase().includes(term)
+            device.ip?.toLowerCase().includes(term) ||
+            device.location?.toLowerCase().includes(term) ||
+            device.address?.toLowerCase().includes(term) ||
+            device.deviceName?.toLowerCase().includes(term)
+
 
         const matchesStatus = device.status === filter
 
@@ -128,7 +136,8 @@ const RegisteredDevices = () => {
                     <thead>
                         <tr>
                             <th>IP</th>
-                            <th>Location ID</th>
+                            <th>Name</th>
+                            <th>Location</th>
                             <th>Address</th>
                             <th>Latitude</th>
                             <th>Longitude</th>
@@ -150,7 +159,7 @@ const RegisteredDevices = () => {
                         ) : filteredDevices.length > 0 ? (
                             filteredDevices.map((device) => (
                                 <EditableRow
-                                    key={device.mac}
+                                    key={device.ip}
                                     device={device}
                                     onUpdated={handleDeviceUpdated}
                                     onDeleted={handleDeviceDeleted}
@@ -227,7 +236,7 @@ const EditableRow = ({ device, onUpdated, onDeleted }) => {
         if (!password) return;
 
         try {
-            const res = await fetch(`${api}/device/${device.mac}`, {
+            const res = await fetch(`${api}/device/${device.ip}`, {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ ...formData, password }),
@@ -252,7 +261,7 @@ const EditableRow = ({ device, onUpdated, onDeleted }) => {
         if (!password) return;
 
         try {
-            const res = await fetch(`${api}/device/delete/${device.mac}`, {
+            const res = await fetch(`${api}/device/delete/${device.ip}`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ password }),
@@ -263,7 +272,7 @@ const EditableRow = ({ device, onUpdated, onDeleted }) => {
 
             alert("✅ Device deleted");
 
-            onDeleted(device.mac);
+            onDeleted(device.ip);
         } catch (err) {
             alert("❌ " + err.message);
         }
@@ -274,7 +283,7 @@ const EditableRow = ({ device, onUpdated, onDeleted }) => {
         try {
             const token = localStorage.getItem("token");
 
-            const res = await fetch(`/api/device/approve/${device.mac}`, {
+            const res = await fetch(`/api/device/approve/${device.ip}`, {
                 method: "PUT",
                 headers: {
                     Authorization: `Bearer ${token}`,
@@ -295,7 +304,7 @@ const EditableRow = ({ device, onUpdated, onDeleted }) => {
         try {
             const token = localStorage.getItem("token");
 
-            const res = await fetch(`/api/device/reject/${device.mac}`, {
+            const res = await fetch(`/api/device/reject/${device.ip}`, {
                 method: "PUT",
                 headers: {
                     Authorization: `Bearer ${token}`,
@@ -314,18 +323,18 @@ const EditableRow = ({ device, onUpdated, onDeleted }) => {
     return (
         <>
             <tr>
-                <td>{device.mac}</td>
+                <td>{device.ip}</td>
 
                 <td>
                     {editMode ? (
                         <input
                             className="text-black"
-                            name="locationId"
-                            value={formData.locationId}
+                            name="deviceName"
+                            value={formData.deviceName}
                             onChange={handleChange}
                         />
                     ) : (
-                        device.locationId
+                        device.deviceName
                     )}
                 </td>
 
@@ -333,7 +342,19 @@ const EditableRow = ({ device, onUpdated, onDeleted }) => {
                     {editMode ? (
                         <input
                             className="text-black"
+                            name="location"
+                            value={formData.location}
+                            onChange={handleChange}
+                        />
+                    ) : (
+                        device.location
+                    )}
+                </td>
 
+                <td>
+                    {editMode ? (
+                        <input
+                            className="text-black"
                             name="address"
                             value={formData.address}
                             onChange={handleChange}

@@ -413,3 +413,6 @@ Thresholds are defined in `server/thresholds.js` (and mirrored in `iot-dashboard
 | **DB Cleanup** | Hourly | Caps `SensorReading` collection at `MAX_SENSOR_DOCS` (default 50,000) by deleting oldest documents beyond the boundary |
 | **Log File Cleanup** | Every 24 hours | Deletes `.inc` log files older than 3 days from the incoming log directory |
 | **Bulk Buffer Flush** | Every 2 seconds | Flushes the in-memory reading buffer to MongoDB via `insertMany` (up to 1000 docs per flush) |
+
+# Docker start 
+docker start ems-rabbitmq

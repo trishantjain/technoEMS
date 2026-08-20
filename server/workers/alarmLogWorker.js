@@ -56,16 +56,16 @@ async function startWorker() {
             try {
                 const data = JSON.parse(msg.content.toString());
 
-                const { mac, alarms, fanStatus } = data;
+                const { ip, alarms, fanStatus } = data;
                 const baseDir = process.env.ALARM_LOG_DIR;
 
-                if (!mac || !baseDir) {
+                if (!ip || !baseDir) {
                     console.error("Invalid alarm message:", data);
                     channel.ack(msg);
                     return;
                 }
 
-                const macDir = mac.replace(/[:. ]/g, "_");
+                const macDir = ip.replace(/[:. ]/g, "_");
                 const deviceAlarmDir = path.join(baseDir, macDir);
                 fs.mkdirSync(deviceAlarmDir, { recursive: true });
 
@@ -76,10 +76,10 @@ async function startWorker() {
 
                 if (Array.isArray(fanStatus) && fanStatus.includes(2)) {
                     logLine =
-                        `[${now.toLocaleString()}] | MAC: ${mac} | ${alarms} | Fans: ${fanStatus}`;
+                        `[${now.toLocaleString()}] | IP: ${ip} | ${alarms} | Fans: ${fanStatus}`;
                 } else {
                     logLine =
-                        `[${now.toLocaleString()}] | MAC: ${mac} | ${alarms}`;
+                        `[${now.toLocaleString()}] | IP: ${ip} | ${alarms}`;
                 }
 
                 fs.appendFileSync(

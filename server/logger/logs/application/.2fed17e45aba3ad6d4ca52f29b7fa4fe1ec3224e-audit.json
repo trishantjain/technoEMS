@@ -1,0 +1,20 @@
+{
+    "keep": {
+        "days": true,
+        "amount": 30
+    },
+    "auditLog": "/home/techno/Documents/TechnoTrendz/server/logger/logs/application/.2fed17e45aba3ad6d4ca52f29b7fa4fe1ec3224e-audit.json",
+    "files": [
+        {
+            "date": 1786457811663,
+            "name": "/home/techno/Documents/TechnoTrendz/server/logger/logs/application/2026-08-11.log",
+            "hash": "9dc923910bf4f076b11c8a9c1dee47bd290f75ac99a4e69e035d3d2435d220f5"
+        },
+        {
+            "date": 1786542345363,
+            "name": "/home/techno/Documents/TechnoTrendz/server/logger/logs/application/2026-08-12.log",
+            "hash": "73a1c7f3ce4b8f47f54508a3d7ce2cb5ac11eb44582476774a37b3309fcd9f4b"
+        }
+    ],
+    "hashType": "sha256"
+}

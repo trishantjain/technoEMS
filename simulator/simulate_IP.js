@@ -20,8 +20,8 @@ let isCSVMode = false;
 const simulatorState = {
   insideTemperature: 26,
   outsideTemperature: 26,
-  outputVoltage: 35,
-  inputVoltage: 33,
+  outputVoltage: 4600,
+  inputVoltage: 33000,
   humidity: 60,
   fireAlarm: false,
   leakage: false,
@@ -36,7 +36,9 @@ const simulatorState = {
   fan4: false,
   fan5: false,
   fan6: false,
-  mode: "random"
+  hupsBat: 50,
+  hupsDVC: 60,
+  mode: "manual"
 }
 
 // 🔥 PRE-INDEXING: Fast lookup structure
@@ -392,12 +394,12 @@ function startDevice(mac, index) {
           const waterLogging = simulatorState.mode === 'random' ? triggerAlarm && Math.random() < 0.2 ? 1 : 0 : simulatorState.logging ? 1 : 0;
           const waterLeakage = simulatorState.mode === 'random' ? !triggerAlarm && Math.random() < 0.2 ? 1 : 0 : simulatorState.leakage ? 1 : 0;
           const outputVoltage = simulatorState.mode === "random" ? triggerAlarm ? 2.5 + Math.random() * 10 : 3.3 + Math.random() * 10 : simulatorState.outputVoltage;
-          const hupsDVC = triggerAlarm ? 2.5 + Math.random() * 10 : 3.3 + Math.random() * 10;
+          const hupsDVC = simulatorState.mode === "random" ? triggerAlarm ? 2.5 + Math.random() * 10 : 3.3 + Math.random() * 10 : simulatorState.outputVoltage;
           // const inputVoltage = 80;
-          const inputVoltage = triggerAlarm ? 2.5 + Math.random() * 10 : 3.3 + Math.random() * 10;
-          const hupsBat = triggerAlarm ? 2.5 + Math.random() * 10 : 3.3 + Math.random() * 10;
+          const inputVoltage = simulatorState.mode === "random" ? triggerAlarm ? 2.5 + Math.random() * 10 : 3.3 + Math.random() * 10 : simulatorState.outputVoltage;
+          const hupsBat = simulatorState.mode === "random" ? triggerAlarm ? 2.5 + Math.random() * 10 : 3.3 + Math.random() * 10 : simulatorState.outputVoltage;
           // const batteryBackup = triggerAlarm ? 12 + Math.random() * 2 : 20 + Math.random() * 3;
-          const batteryBackup = 3;
+          const batteryBackup = 40;
           const alarmActive = waterLogging || waterLeakage;
           const fireAlarm = simulatorState.mode === 'random' ? Math.random() < 0.5 ? 1 : 0 : simulatorState.fireAlarm ? 1 : 0;
           // const fireAlarm = 1;
