@@ -140,7 +140,11 @@ async function loadDeviceCache() {
   try {
     const devices = await Device.find({}, { ip: 1, ipCamera: 1 }).lean();
 
+    deviceCache.clear();
+
     devices.forEach(d => {
+      if (!d.ip) return;
+
       deviceCache.set(d.ip, {
         cameraType: d.ipCamera?.type || null,
         cameraIP: d.ipCamera?.ip || null
@@ -417,10 +421,12 @@ app.post("/api/register-device", authMiddleware, async (req, res) => {
 
     await device.save();
 
-    deviceCache.set(ip, {
-      cameraType: parsedCamera?.type || null,
-      cameraIP: parsedCamera?.ip || null
-    });
+    await loadDeviceCache();
+
+    // deviceCache.set(ip, {
+    //   cameraType: parsedCamera?.type || null,
+    //   cameraIP: parsedCamera?.ip || null
+    // });
 
     res.json({ message: "Device registered successfully" });
   } catch (err) {
@@ -477,7 +483,7 @@ app.get("/api/admin/devices", authMiddleware, async (req, res) => {
   }
 });
 
-// ✅ Get connected MACs
+// ✅ Get connected IPs
 app.get("/api/devices", (req, res) => {
   try {
     res.json(Array.from(connectedDevices.keys()).map(ip => ip)); //! Converting to LowerCase()
@@ -493,7 +499,7 @@ app.get("/api/devices", (req, res) => {
   }
 });
 
-// ✅ Update device by MAC
+// ✅ Update device by IP
 app.put("/api/device/:ip", async (req, res) => {
   try {
     /* NEW ADDED*/
@@ -516,7 +522,6 @@ app.put("/api/device/:ip", async (req, res) => {
         type: camType,
         ip: camIP
       }
-
     }
 
     const updatedDevice = await Device.findOneAndUpdate(
@@ -524,8 +529,20 @@ app.put("/api/device/:ip", async (req, res) => {
       { $set: updateFields },
       { new: true }
     );
+
     if (!updatedDevice)
       return res.status(404).json({ error: "Device not found" });
+
+    await loadDeviceCache();
+
+    // Update device cache immediately
+    // deviceCache.set(updatedDevice.ip, {
+    //   cameraType: updatedDevice.ipCamera?.type || null,
+    //   cameraIP: updatedDevice.ipCamera?.ip || null
+    // });
+
+    logger.info(`📦 Device cache updated for IP: ${updatedDevice.ip}`);
+
     res.json(updatedDevice);
   } catch (error) {
     logger.error({
@@ -538,7 +555,7 @@ app.put("/api/device/:ip", async (req, res) => {
 });
 
 //! Have to check this API
-// ✅ Deleting device by MAC
+// ✅ Deleting device by IP
 app.post("/api/device/delete/:ip", async (req, res) => {
   const { password } = req.body;
 
@@ -551,8 +568,12 @@ app.post("/api/device/delete/:ip", async (req, res) => {
       .json({ error: "Unauthorized: Invalid admin password" });
   try {
     const result = await Device.deleteOne({ ip: ip });
+
     if (result.deletedCount === 0)
       return res.status(404).json({ error: "Device not found" });
+
+    await loadDeviceCache();
+
     res.json({ message: "Device deleted successfully" });
   } catch (err) {
     console.error("Error deleting device:", err);
@@ -1818,12 +1839,12 @@ const server = net.createServer((socket) => {
 
       // console.log(`Raw data received ${data.toString('hex')} with length (${data.length} bytes) from`, clientInfo);
       // if (eMS_LOGS) {
-        console.log(
-          `Raw data received ${packetCount} with length ${data.length} from`,
-          clientInfo
-        );
+      console.log(
+        `Raw data received ${packetCount} with length ${data.length} from`,
+        clientInfo
+      );
       // }   
-         // packetCount++;
+      // packetCount++;
 
       // console.log("Raw data received")
       // console.log(`Raw data hex preview:`, data.toString('hex').substring(0, 100) + '...');
@@ -1932,8 +1953,17 @@ const server = net.createServer((socket) => {
           .join('.');
 
         // Reject obvious garbage IPs
-        if (!ip.startsWith('192.168.')) {
-          console.warn('🚫 Dropping invalid IP:', ip);
+        // if (!ip.startsWith('192.168.')) {
+        //   console.warn('🚫 Dropping invalid IP:', ip);
+        //   socket.buffer = socket.buffer.slice(1);
+        //   continue;
+        // }
+
+        // Check whether extracted IP is a registered device
+        if (!deviceCache.has(ip)) {
+          console.warn(`🚫 Dropping packet: Unknown device IP ${ip}`);
+
+          // Resync buffer because this may be garbage/misaligned data
           socket.buffer = socket.buffer.slice(1);
           continue;
         }
@@ -1941,53 +1971,6 @@ const server = net.createServer((socket) => {
         // Extract live packet
         const packet = socket.buffer.slice(0, 58);
         socket.buffer = socket.buffer.slice(58);
-
-        // Your existing live packet processing continues here...
-        // while (socket.buffer.length >= 58) {
-        //   packetCount++;
-
-        //   // Handle protocol preamble once after device restart
-        //   if (!socket.preambleHandled && socket.buffer.length >= 4) {
-        //     const preamble = socket.buffer.slice(0, 4).toString('ascii');
-
-        //     if (preamble === 'tcp2') {
-        //       socket.buffer = socket.buffer.slice(4);
-        //       socket.preambleHandled = true;
-        //     }
-        //   }
-
-        //   const header = socket.buffer.slice(0, 8).toString('ascii');
-
-        //   if (!/^[0-9a-fA-F]{8}$/.test(header)) {
-        //     // corrupted / misaligned packet → resync like MAC server
-        //     socket.buffer = socket.buffer.slice(1);
-        //     continue;
-        //   }
-
-        //   const ipHexAscii = socket.buffer.slice(0, 8).toString('ascii');
-
-        //   // Convert hex pairs → decimal
-        //   const ip = ipHexAscii
-        //     .match(/.{2}/g)
-        //     .map(h => parseInt(h, 16))
-        //     .join('.');
-
-        //   // Reject obvious garbage IPs
-        //   if (!ip.startsWith('192.168.')) {
-        //     console.warn('🚫 Dropping invalid IP:', ip);
-        //     socket.buffer = socket.buffer.slice(1);
-        //     continue;
-        //   }
-
-        //   // console.log("EXTRACTED IP: ", ip);
-
-        //   // wait for full packet
-        //   if (socket.buffer.length < 58) break;
-
-        //   const packet = socket.buffer.slice(0, 58);
-        //   socket.buffer = socket.buffer.slice(58);
-
-        // const ip = `${packet[0]}.${packet[1]}.${packet[2]}.${packet[3]}`;
 
 
         // console.log("Extracted IP: ", extractedIP);
