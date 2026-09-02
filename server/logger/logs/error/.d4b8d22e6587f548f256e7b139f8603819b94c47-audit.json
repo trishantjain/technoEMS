@@ -1,0 +1,45 @@
+{
+    "keep": {
+        "days": true,
+        "amount": 30
+    },
+    "auditLog": "/var/www/ems/technoEMS/server/logger/logs/error/.d4b8d22e6587f548f256e7b139f8603819b94c47-audit.json",
+    "files": [
+        {
+            "date": 1787562340992,
+            "name": "/var/www/ems/technoEMS/server/logger/logs/error/2026-08-24.log",
+            "hash": "98c02b44ddefcec6ce5d9c7c232610fb419263dd9199eb4c3bb0b8beb5adbfb4"
+        },
+        {
+            "date": 1787596302328,
+            "name": "/var/www/ems/technoEMS/server/logger/logs/error/2026-08-25.log",
+            "hash": "63f1a7009eccaf42a2375bd2c584aa90d20ed8a527afe2531a40267d5a0cacfc"
+        },
+        {
+            "date": 1787682704886,
+            "name": "/var/www/ems/technoEMS/server/logger/logs/error/2026-08-26.log",
+            "hash": "26e5f0fe1d384f3711157d4940d815e4446f618e322436407a5295cc185b86cd"
+        },
+        {
+            "date": 1787769107367,
+            "name": "/var/www/ems/technoEMS/server/logger/logs/error/2026-08-27.log",
+            "hash": "ba35b23fbff9600577be16524a56a5f3b7d86e15b38fd3e33db416bd6325f3ee"
+        },
+        {
+            "date": 1787855509877,
+            "name": "/var/www/ems/technoEMS/server/logger/logs/error/2026-08-28.log",
+            "hash": "0aa177ea0e3997a2c8055f002d507e9162fd07287995007a747889ab9d74fb7c"
+        },
+        {
+            "date": 1788263421714,
+            "name": "/var/www/ems/technoEMS/server/logger/logs/error/2026-09-01.log",
+            "hash": "3226f7899081a4d7161b1d0be026e70e4b1bdb7eb3c3ded0ae826c8f66deb549"
+        },
+        {
+            "date": 1788348797355,
+            "name": "/var/www/ems/technoEMS/server/logger/logs/error/2026-09-02.log",
+            "hash": "3bf3082b975971b73f230d09cc4dc858d6cd132eb0cdafe2abe992eb1aee01be"
+        }
+    ],
+    "hashType": "sha256"
+}

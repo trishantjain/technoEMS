@@ -445,7 +445,7 @@ app.post("/api/register-device", authMiddleware, async (req, res) => {
 // ✅ Get registered device metadata
 app.get("/api/devices-info", async (req, res) => {
   try {
-    console.time("deviceInfo");
+    
 
     const devices = await Device.find({ status: "approved" }).sort({ locationId: -1 }); // includes ipCamera
     /* NEW ADDED */
@@ -454,7 +454,7 @@ app.get("/api/devices-info", async (req, res) => {
       // ip: device.ip.toLowerCase() //! Converting to LowerCase()
       ip: device.ip
     }));
-    console.timeEnd("deviceInfo");
+   
     res.json(normalizedDevices);
   } catch (err) {
     console.error("Error fetching devices info:", err);
@@ -591,11 +591,10 @@ app.post("/api/device/delete/:ip", async (req, res) => {
 // ✅ Get only registered MACs
 app.get("/api/all-devices", async (req, res) => {
   try {
-    console.time("all-devices");
+    
     const devices = await Device.find({}, "ip");
 
-    console.timeEnd("all-devices");
-
+    
     res.json(devices.map((d) => d.ip)); //! Converting to LowerCase()
   } catch (error) {
     console.error("Error fetching registered devices:", error);
@@ -954,6 +953,7 @@ app.post("/command", (req, res) => {
   try {
 
     const { ip, command } = req.body;
+    console.log("Command received: ", command);
     // const normalizedIP = ip.toLowerCase(); //! Converting to LowerCase()
     const deviceSocket = connectedDevices.get(ip);
 
@@ -961,6 +961,8 @@ app.post("/command", (req, res) => {
       connectedDevices.delete(ip);
       return res.status(404).json({ message: `Device ${ip} not connected` });
     }
+
+    console.log("Sending command: ");
 
     const buffer = Buffer.from(command, "utf-8");
     deviceSocket.write(buffer, (err) => {
@@ -973,6 +975,8 @@ app.post("/command", (req, res) => {
           ip: ip,
           command
         }, "Failed to send command to device");
+
+	console.log(" sent command");
 
         return res
           .status(500)
@@ -1837,7 +1841,7 @@ const server = net.createServer((socket) => {
     try {
       // debug.bufferStats.discardedBytes.totalBytes += data.length;
 
-      // console.log(`Raw data received ${data.toString('hex')} with length (${data.length} bytes) from`, clientInfo);
+      console.log(`Raw data received ${data.toString('hex')} with length (${data.length} bytes) from`, clientInfo);
       // if (eMS_LOGS) {
       console.log(
         `Raw data received ${packetCount} with length ${data.length} from`,
@@ -1986,9 +1990,9 @@ const server = net.createServer((socket) => {
         const waterLogging = !!packet[31]; // "!!" -> converts true/false to 1/0
         const waterLeakage = !!packet[32];
 
-        const outputVoltage = (+packet.readInt16LE(33).toFixed(2)) / 100;
+        const outputVoltage = +packet.readInt16LE(33).toFixed(2);
         const hupsDVC = (+packet.readInt16LE(35).toFixed(2)) / 100;
-        const inputVoltage = (+packet.readInt16LE(37).toFixed(2)) / 100;
+        const inputVoltage = +packet.readInt16LE(37).toFixed(2);
         const hupsBatVolt = packet.readInt16LE(39);
         const batteryBackup = +packet.readFloatLE(41).toFixed(2);
 
@@ -2034,9 +2038,14 @@ const server = net.createServer((socket) => {
         for (let i = 0; i < 6; i++) {
           fanStatus[i] = (fanStatusBits >> (i * 2)) & 0x03; // 0=off, 1=healthy, 2=faulty
         }
-        // console.log("Padding: ", padding);
 
 
+         console.log("Hups Batt. volt: ", hupsBatVolt);
+	 console.log("Out. Volt.: ", outputVoltage);
+	 console.log("Inp. Volt.: ", inputVoltage);
+	 console.log("Load Current: ",  hupsDVC);
+	 console.log("HUPS Stat: ", hupsStat);
+	 console.log("HUPS Alarms: ", hupsAlarms);
         //* ===================== LOGGING EXTRACTED VALUES =====================
         if (eMS_LOGS) {
 
