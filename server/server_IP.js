@@ -1993,7 +1993,7 @@ const server = net.createServer((socket) => {
         const outputVoltage = +packet.readInt16LE(33).toFixed(2);
         const hupsDVC = (+packet.readInt16LE(35).toFixed(2)) / 100;
         const inputVoltage = +packet.readInt16LE(37).toFixed(2);
-        const hupsBatVolt = packet.readInt16LE(39);
+        const hupsBatVolt = +packet.readInt16LE(39).toFixed(2); // HUPS Battery Backup
         const batteryBackup = +packet.readFloatLE(41).toFixed(2);
 
         const alarmActive = !!packet[45];
@@ -2009,8 +2009,8 @@ const server = net.createServer((socket) => {
         const fanStatusBits = packet.readUInt16LE(52);
 
         const pwsFailCount = packet[54]; // Password Failure Count
-        const hupsStat = packet[55];
-        const hupsRes = packet[56];
+        const hupsStat = packet[55]; // HUPS Alarms
+        const hupsSOC = packet[56]; // HUPS SOC
         const failMask = packet[57];
 
         const packetTimestamp = new Date();
@@ -2023,6 +2023,8 @@ const server = net.createServer((socket) => {
             Each alarm is represented by a single bit within the 'hupsStat' integer. 
             The loop iterates 8 times (for 8 alarms), extracting each bit and 
             storing the alarm status in the 'hupsAlarms' array.
+            
+            Mains | Rectifier | Inverter | O.Load 
         */
         for (let i = 0; i < 8; i++) {
           hupsAlarms[i] = (hupsStat >> (i) & 0x01);
@@ -2040,12 +2042,13 @@ const server = net.createServer((socket) => {
         }
 
 
-         console.log("Hups Batt. volt: ", hupsBatVolt);
-	 console.log("Out. Volt.: ", outputVoltage);
-	 console.log("Inp. Volt.: ", inputVoltage);
-	 console.log("Load Current: ",  hupsDVC);
-	 console.log("HUPS Stat: ", hupsStat);
-	 console.log("HUPS Alarms: ", hupsAlarms);
+         // console.log("Hups Batt. volt: ", hupsBatVolt);
+      	 // console.log("Out. Volt.: ", outputVoltage);
+      	 // console.log("Inp. Volt.: ", inputVoltage);
+      	 // console.log("Load Current: ",  hupsDVC);
+      	 console.log("HUPS Stat: ", hupsStat);
+      	 console.log("HUPS Alarms: ", hupsAlarms);
+         // console.log("HUPS SOC: ", hupsSOC);
         //* ===================== LOGGING EXTRACTED VALUES =====================
         if (eMS_LOGS) {
 
@@ -2220,7 +2223,7 @@ const server = net.createServer((socket) => {
           overStatus: hupsAlarms[3],
           mptStatus: hupsAlarms[4],
           mosfStatus: hupsAlarms[5],
-          hupsRes,
+          hupsSOC,
           ...thresholdAlarms,
           // Set timestamp to IST
           timestamp: packetTimestamp
