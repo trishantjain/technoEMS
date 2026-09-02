@@ -12,7 +12,7 @@ const sensorReadingSchema = new mongoose.Schema({
     outputVoltage: { type: Number, required: true },
     hupsDVC: { type: Number, required: true },
     inputVoltage: { type: Number, required: true },
-    hupsBatVolt: { type: Number, required: true },
+    hupsBatBackup: { type: Number, required: true },
     batteryBackup: { type: Number, required: true },
     alarmActive: { type: Boolean, required: true },
     fireAlarm: { type: Number, required: true },
