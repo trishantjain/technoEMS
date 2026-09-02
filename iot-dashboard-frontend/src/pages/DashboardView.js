@@ -1172,7 +1172,7 @@ function DashboardView() {
                   />
                   <Gauge
                     label="Battery(Hours)"
-                    value={(latestReading.hupsBatVolt).toFixed(2)}
+                    value={(latestReading.hupsBatBackup).toFixed(2)}
                     max={120}
                     color={latestReading.batteryBackup <= thresholds.batteryBackup.min ? "#ec7632" : "#67b816"}
                     alarm={alarmToggle ? latestReading.batteryBackupAlarm : false}
