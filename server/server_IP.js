@@ -1993,7 +1993,7 @@ const server = net.createServer((socket) => {
         const outputVoltage = +packet.readInt16LE(33).toFixed(2);
         const hupsDVC = (+packet.readInt16LE(35).toFixed(2)) / 100;
         const inputVoltage = +packet.readInt16LE(37).toFixed(2);
-        const hupsBatVolt = +packet.readInt16LE(39).toFixed(2); // HUPS Battery Backup
+        const hupsBatBackup = +packet.readInt16LE(39).toFixed(2); // HUPS Battery Backup
         const batteryBackup = +packet.readFloatLE(41).toFixed(2);
 
         const alarmActive = !!packet[45];
@@ -2042,7 +2042,7 @@ const server = net.createServer((socket) => {
         }
 
 
-         // console.log("Hups Batt. volt: ", hupsBatVolt);
+         // console.log("Hups Batt. volt: ", hupsBatBackup);
       	 // console.log("Out. Volt.: ", outputVoltage);
       	 // console.log("Inp. Volt.: ", inputVoltage);
       	 // console.log("Load Current: ",  hupsDVC);
@@ -2059,7 +2059,7 @@ const server = net.createServer((socket) => {
           // console.log("Fan Status: ", fanStatus);
           // console.log(fanLevel1Running, fanLevel2Running, fanLevel3Running, fanLevel4Running);
 
-          // console.log("BAT Volt: ", hupsBatVolt);
+          // console.log("BAT Volt: ", hupsBatBackup);
           // console.log("DV Current: ", hupsDVC);
 
           // console.log("Door status: ", doorStatus);
@@ -2201,7 +2201,7 @@ const server = net.createServer((socket) => {
           outputVoltage,
           hupsDVC,
           inputVoltage,
-          hupsBatVolt,
+          hupsBatBackup,
           batteryBackup,
           alarmActive,
           fireAlarm,
