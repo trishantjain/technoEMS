@@ -1165,8 +1165,8 @@ function DashboardView() {
                   />
                   <Gauge
                     label="Battery %"
-                    value={(latestReading.hupsBatVolt * 1.5).toFixed(2)}
-                    max={120}
+                    value={(latestReading.hupsSOC).toFixed(2)}
+                    max={100}
                     color={latestReading.batteryBackup <= thresholds.batteryBackup.min ? "#ec7632" : "#67b816"}
                     alarm={alarmToggle ? latestReading.batteryBackupAlarm : false}
                   />
