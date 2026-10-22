@@ -2,14 +2,15 @@ const express = require("express");
 const router = express.Router();
 
 const {
-    getInventory,
-    getPerformance,
-    getAlarms,
-    createDowntime,
-    getDowntimes,
-    updateDowntime,
-    deleteDowntime,
-    getBatteryBackupAlarms
+  getInventory,
+  getPerformance,
+  getAlarms,
+  createDowntime,
+  getDowntimes,
+  updateDowntime,
+  deleteDowntime,
+  getBatteryBackupAlarms,
+  getPingConnectivity,
 } = require("../controller/nms.controller.js");
 
 router.get("/inventory", getInventory);
@@ -18,8 +19,9 @@ router.get("/alarms", getAlarms);
 
 router.post("/downtime", createDowntime);
 router.get("/downtime", getDowntimes);
-router.put("/downtime/:id", updateDowntime);
+router.put("/downtime", updateDowntime);
 router.delete("/downtime", deleteDowntime);
 router.get("/battery-backup-alarms", getBatteryBackupAlarms);
+router.get("/connectivity/ping", getPingConnectivity);
 
 module.exports = router;

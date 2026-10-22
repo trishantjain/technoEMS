@@ -8,7 +8,7 @@ const TOTAL_DEVICES = 11;
 const devices = [];
 let csvData = [];
 let currentSecond = 0;
-let isCSVMode = true;
+let isCSVMode = false;
 
 // 🔥 PRE-INDEXING: Fast lookup structure
 let csvDataBySecond = new Map(); // { second → [row1, row2, ...] }

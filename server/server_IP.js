@@ -1,6 +1,6 @@
 const path = require("path");
 require("dotenv").config({
-  path: path.join(__dirname, "/.env")
+  path: path.join(__dirname, "/.env"),
 });
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
@@ -13,16 +13,30 @@ const bodyParser = require("body-parser");
 const SensorReading = require("./models/SensorReading");
 const thresholds = require("./thresholds");
 const fs = require("fs");
-const axios = require('axios');
-const { spawn } = require('child_process');
+const axios = require("axios");
+const { spawn } = require("child_process");
 const readline = require("readline");
-const { connectRabbit, publishAlarm, publishSnapshot, consume, publishLog, publishAlarmResult } = require("./services/rabbit");
+const {
+  connectRabbit,
+  publishAlarm,
+  publishSnapshot,
+  consume,
+  publishLog,
+  publishAlarmResult,
+} = require("./services/rabbit");
 const parseQueryDate = require("./alarm/dateParser.js");
 const parseIstLogTimestamp = require("./alarm/timestampParser.js");
 const parseAlarmLine = require("./alarm/alarmParser.js");
 const getAlarmFiles = require("./alarm/fileScanner.js");
-const alarmHistoryCache = require("./cache/alarmHistoryCache.js")
+const alarmHistoryCache = require("./cache/alarmHistoryCache.js");
 const { startStatusMonitor } = require("./workers/statusMonitor.js");
+const {
+  initializeDeviceStatusCache,
+  updateDeviceStatusCache,
+  registerDeviceInStatusCache,
+} = require("./services/deviceStatusCache");
+
+const { startPingRecordService } = require("./services/pingRecordService");
 
 const logger = require("./logger/logger.js");
 
@@ -39,7 +53,6 @@ app.use(cors());
 app.use("/api/nms", nmsRoutes);
 
 const deviceCache = new Map();
-
 
 // ===================== SSE: Snapshot Notifications =====================
 const snapshotSseClients = new Set();
@@ -104,14 +117,44 @@ const logStreams = {};
 // 🔌 DB connection
 mongoose
   .connect(process.env.MONGO_URI)
-  .then(() => logger.info("MongoDB connected"))
+  .then(async () => {
+    logger.info("MongoDB connected");
+
+    try {
+      // LOAD THE EXISTING CAMERA/DEVICE METADATA CACHE.
+      await loadDeviceCache();
+
+      // INITIALIZE IP -> MongoDB DEVICE ID + CURRENT STATUS
+      await initializeDeviceStatusCache();
+
+      // START MONITORING AND PERIODIC PING-RECORD CREATION
+      startStatusMonitor();
+      startPingRecordService();
+
+      logger.info("Device status cache and ping-record service started");
+    } catch (err) {
+      console.error("Failed to initialize device services:", err);
+
+      logger.error(
+        {
+          error: err.message,
+          stack: err.stack,
+        },
+        "Failed to initialize device services",
+      );
+    }
+  })
+
   .catch((err) => {
     console.error("MongoDB connection error:", err);
 
-    logger.error({
-      error: err.message,
-      stack: err.stack
-    }, "MongoDB connection error");
+    logger.error(
+      {
+        error: err.message,
+        stack: err.stack,
+      },
+      "MongoDB connection error",
+    );
   });
 
 (async () => {
@@ -119,18 +162,22 @@ mongoose
 
   // Worker publishes completion events to this queue.
   // We translate those to SSE for the UI.
-  await consume("snapshot.done", async (payload) => {
-    broadcastSnapshotCaptured(payload);
-  }, { prefetch: 50 });
+  await consume(
+    "snapshot.done",
+    async (payload) => {
+      broadcastSnapshotCaptured(payload);
+    },
+    { prefetch: 50 },
+  );
 })();
 
-startStatusMonitor();
+// startStatusMonitor();
 
 app.get("/test-alarm", (req, res) => {
   publishAlarm({
     ip: "TEST_DEVICE",
     alarms: ["Test Alarm Triggered"],
-    timestamp: new Date()
+    timestamp: new Date(),
   });
 
   res.send("Test alarm published");
@@ -140,14 +187,10 @@ async function loadDeviceCache() {
   try {
     const devices = await Device.find({}, { ip: 1, ipCamera: 1 }).lean();
 
-    deviceCache.clear();
-
-    devices.forEach(d => {
-      if (!d.ip) return;
-
+    devices.forEach((d) => {
       deviceCache.set(d.ip, {
         cameraType: d.ipCamera?.type || null,
-        cameraIP: d.ipCamera?.ip || null
+        cameraIP: d.ipCamera?.ip || null,
       });
     });
 
@@ -155,16 +198,17 @@ async function loadDeviceCache() {
   } catch (err) {
     console.error("Device not loaded:", err);
 
-    logger.error({
-      error: err.message,
-      stack: err.stack
-    }, "Device not loaded");
+    logger.error(
+      {
+        error: err.message,
+        stack: err.stack,
+      },
+      "Device not loaded",
+    );
   }
 }
 
-loadDeviceCache();
-
-
+// loadDeviceCache();
 
 // ===================== HTTP API Endpoints (unchanged) =====================
 /* When a GET request is made to "/ping", it will attempt to ping the MongoDB database using Mongoose. 
@@ -178,10 +222,13 @@ app.get("/api/ping", async (req, res) => {
   } catch (e) {
     console.error("Ping DB check failed:", e);
 
-    logger.error({
-      error: e.message,
-      stack: e.stack
-    }, "Ping DB check failed");
+    logger.error(
+      {
+        error: e.message,
+        stack: e.stack,
+      },
+      "Ping DB check failed",
+    );
 
     res.status(500).send("MongoDB unreachable");
   }
@@ -205,7 +252,7 @@ app.post("/api/login", async (req, res) => {
       const token = jwt.sign(
         { username: "admin", role: "admin" },
         process.env.JWT_SECRET,
-        { expiresIn: "2h" }
+        { expiresIn: "2h" },
       );
       return res.json({ role: "admin", token });
     }
@@ -220,17 +267,20 @@ app.post("/api/login", async (req, res) => {
     const token = jwt.sign(
       { username: user.username, role: user.role },
       process.env.JWT_SECRET,
-      { expiresIn: "2h" }
+      { expiresIn: "2h" },
     );
 
     res.json({ role: user.role, token }); // ✅ return role and token
   } catch (err) {
     console.error("Failed to fetch users:", err);
 
-    logger.error({
-      error: err.message,
-      stack: err.stack
-    }, "Failed to fetch users:");
+    logger.error(
+      {
+        error: err.message,
+        stack: err.stack,
+      },
+      "Failed to fetch users:",
+    );
 
     res.status(500).json({ error: "Failed to fetch users" });
   }
@@ -262,10 +312,13 @@ app.post("/api/register-user", async (req, res) => {
   } catch (error) {
     console.error("User registration failed:", error);
 
-    logger.error({
-      error: error.message,
-      stack: error.stack
-    }, "User registration failed");
+    logger.error(
+      {
+        error: error.message,
+        stack: error.stack,
+      },
+      "User registration failed",
+    );
 
     res.status(500).json({ error: "Internal Server Error" });
   }
@@ -280,10 +333,13 @@ app.get("/api/users", async (req, res) => {
   } catch (err) {
     console.error("Failed to fetch users:", err);
 
-    logger.error({
-      error: err.message,
-      stack: err.stack
-    }, "Failed to fetch users");
+    logger.error(
+      {
+        error: err.message,
+        stack: err.stack,
+      },
+      "Failed to fetch users",
+    );
   }
 });
 
@@ -313,7 +369,7 @@ app.put("/api/user/:id", async (req, res) => {
     const updatedDevice = await User.findOneAndUpdate(
       user,
       { $set: updateFields },
-      { new: true }
+      { new: true },
     );
 
     if (!updatedDevice)
@@ -322,11 +378,14 @@ app.put("/api/user/:id", async (req, res) => {
   } catch (error) {
     console.error("Error updating device:", error);
 
-    logger.error({
-      error: error.message,
-      stack: error.stack,
-      ip: req.params.ip
-    }, "Error updating device");
+    logger.error(
+      {
+        error: error.message,
+        stack: error.stack,
+        ip: req.params.ip,
+      },
+      "Error updating device",
+    );
 
     res.status(500).json({ error: "Server error while updating device" });
   }
@@ -335,7 +394,6 @@ app.put("/api/user/:id", async (req, res) => {
 // ✅ Delete User
 app.delete("/api/user/:username", async (req, res) => {
   try {
-
     const { adminPassword } = req.body;
 
     // Comparing Admin Password
@@ -349,38 +407,36 @@ app.delete("/api/user/:username", async (req, res) => {
     if (result.deletedCount === 0)
       return res.status(404).json({ error: "User not found" });
     res.json({ message: "User deleted successfully" });
-
   } catch (error) {
     console.error("Error deleting user:", error);
 
-    logger.error({
-      error: error.message,
-      stack: error.stack
-    }, "Error deleting user");
+    logger.error(
+      {
+        error: error.message,
+        stack: error.stack,
+      },
+      "Error deleting user",
+    );
 
     res.status(500).json({
-      error: "Server error while deleting user"
+      error: "Server error while deleting user",
     });
   }
 });
 // *====================  USER API  ========================
 
-
-// *====================  DEVICE API  ====================== 
+// *====================  DEVICE API  ======================
 // ✅ Register new device
 app.post("/api/register-device", authMiddleware, async (req, res) => {
-  const { ip, deviceName, location, address, latitude, longitude, ipCamera } = req.body;
-  // const { ip, locationId, address, latitude, longitude } = req.body;
-  console.log("Location: ", location)
+  const { ip, deviceName, location, address, latitude, longitude, ipCamera } =
+    req.body;
+
   try {
     // const normalizedMac = ip.toLowerCase(); // Converting to LowerCase()
     let parsedCamera = ipCamera;
 
     // UNAUTHORIZED ERROR MESSAGE
-    if (
-      req.user.role !== "admin" &&
-      req.user.role !== "field-worker"
-    ) {
+    if (req.user.role !== "admin" && req.user.role !== "field-worker") {
       return res.status(403).json({ error: "Unauthorized" });
     }
 
@@ -389,20 +445,6 @@ app.post("/api/register-device", authMiddleware, async (req, res) => {
     if (existingMac) {
       return res.status(409).json({ error: "Device IP already exists" });
     }
-
-    // if (ipCamera && typeof ipCamera === 'string') {
-    //   const [camType, camIP] = ipCamera.split(',');
-    //   parsedCamera = {
-    //     type: camType,
-    //     ip: camIP.trim()
-    //   }
-    // }
-
-    // const ipMatch = await Device.find({ "ipCamera.ip": parsedCamera.ip });
-    // if (ipMatch && ipMatch.length > 0) {
-    //   return res.status(409).json({ error: "Camera Ip already present" });
-    // }
-
 
     // console.log("Parsed Camera: ", parsedCamera);
     const device = new Device({
@@ -413,30 +455,32 @@ app.post("/api/register-device", authMiddleware, async (req, res) => {
       address,
       latitude,
       longitude,
-      // ipCamera: parsedCamera || "",
-
       status: req.user.role === "admin" ? "approved" : "pending",
-      createdBy: req.user.username
+      createdBy: req.user.username,
     });
 
     await device.save();
 
-    await loadDeviceCache();
+    // ADDING NEW DEVICE TO PING-RECORD
+    registerDeviceInStatusCache(device);
 
-    // deviceCache.set(ip, {
-    //   cameraType: parsedCamera?.type || null,
-    //   cameraIP: parsedCamera?.ip || null
-    // });
+    deviceCache.set(ip, {
+      cameraType: parsedCamera?.type || null,
+      cameraIP: parsedCamera?.ip || null,
+    });
 
     res.json({ message: "Device registered successfully" });
   } catch (err) {
     console.error("Device registration failed:", err);
 
-    logger.error({
-      error: err.message,
-      stack: err.stack,
-      ip: req.body?.ip
-    }, "Device registration failed");
+    logger.error(
+      {
+        error: err.message,
+        stack: err.stack,
+        ip: req.body?.ip,
+      },
+      "Device registration failed",
+    );
 
     res.status(500).json({ error: err });
   }
@@ -445,24 +489,29 @@ app.post("/api/register-device", authMiddleware, async (req, res) => {
 // ✅ Get registered device metadata
 app.get("/api/devices-info", async (req, res) => {
   try {
-    
+    console.time("deviceInfo");
 
-    const devices = await Device.find({ status: "approved" }).sort({ locationId: -1 }); // includes ipCamera
+    const devices = await Device.find({ status: "approved" }).sort({
+      locationId: -1,
+    }); // includes ipCamera
     /* NEW ADDED */
-    const normalizedDevices = devices.map(device => ({
+    const normalizedDevices = devices.map((device) => ({
       ...device._doc,
       // ip: device.ip.toLowerCase() //! Converting to LowerCase()
-      ip: device.ip
+      ip: device.ip,
     }));
-   
+    console.timeEnd("deviceInfo");
     res.json(normalizedDevices);
   } catch (err) {
     console.error("Error fetching devices info:", err);
 
-    logger.error({
-      error: err.message,
-      stack: err.stack
-    }, "Error fetching devices info");
+    logger.error(
+      {
+        error: err.message,
+        stack: err.stack,
+      },
+      "Error fetching devices info",
+    );
 
     res.status(500).json({ error: "Error fetching devices" });
   }
@@ -477,7 +526,6 @@ app.get("/api/admin/devices", authMiddleware, async (req, res) => {
 
     const devices = await Device.find().sort({ createdAt: -1 });
     res.json(devices);
-
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch devices" });
   }
@@ -486,14 +534,17 @@ app.get("/api/admin/devices", authMiddleware, async (req, res) => {
 // ✅ Get connected IPs
 app.get("/api/devices", (req, res) => {
   try {
-    res.json(Array.from(connectedDevices.keys()).map(ip => ip)); //! Converting to LowerCase()
+    res.json(Array.from(connectedDevices.keys()).map((ip) => ip)); //! Converting to LowerCase()
   } catch (err) {
     console.error("Error fetching devices info:", err);
 
-    logger.error({
-      error: err.message,
-      stack: err.stack
-    }, "Error fetching devices info");
+    logger.error(
+      {
+        error: err.message,
+        stack: err.stack,
+      },
+      "Error fetching devices info",
+    );
 
     res.status(500).json({ error: "Error fetching devices" });
   }
@@ -516,40 +567,31 @@ app.put("/api/device/:ip", async (req, res) => {
         .status(403)
         .json({ error: "Unauthorized: Invalid admin password" });
 
-    if (updateFields.ipCamera && typeof updateFields.ipCamera === 'string') {
-      const [camType, camIP] = updateFields.ipCamera.split(',');
+    if (updateFields.ipCamera && typeof updateFields.ipCamera === "string") {
+      const [camType, camIP] = updateFields.ipCamera.split(",");
       updateFields.ipCamera = {
         type: camType,
-        ip: camIP
-      }
+        ip: camIP,
+      };
     }
 
     const updatedDevice = await Device.findOneAndUpdate(
       { ip },
       { $set: updateFields },
-      { new: true }
+      { new: true },
     );
-
     if (!updatedDevice)
       return res.status(404).json({ error: "Device not found" });
-
-    await loadDeviceCache();
-
-    // Update device cache immediately
-    // deviceCache.set(updatedDevice.ip, {
-    //   cameraType: updatedDevice.ipCamera?.type || null,
-    //   cameraIP: updatedDevice.ipCamera?.ip || null
-    // });
-
-    logger.info(`📦 Device cache updated for IP: ${updatedDevice.ip}`);
-
     res.json(updatedDevice);
   } catch (error) {
-    logger.error({
-      error: error.message,
-      stack: error.stack,
-      ip: req.params.ip
-    }, "Error updating device");
+    logger.error(
+      {
+        error: error.message,
+        stack: error.stack,
+        ip: req.params.ip,
+      },
+      "Error updating device",
+    );
     res.status(500).json({ error: "Server error while updating device" });
   }
 });
@@ -571,18 +613,18 @@ app.post("/api/device/delete/:ip", async (req, res) => {
 
     if (result.deletedCount === 0)
       return res.status(404).json({ error: "Device not found" });
-
-    await loadDeviceCache();
-
     res.json({ message: "Device deleted successfully" });
   } catch (err) {
     console.error("Error deleting device:", err);
 
-    logger.error({
-      error: err.message,
-      stack: err.stack,
-      ip: req.params.ip
-    }, "Error deleting device");
+    logger.error(
+      {
+        error: err.message,
+        stack: err.stack,
+        ip: req.params.ip,
+      },
+      "Error deleting device",
+    );
 
     res.status(500).json({ error: "Error deleting device" });
   }
@@ -591,18 +633,22 @@ app.post("/api/device/delete/:ip", async (req, res) => {
 // ✅ Get only registered MACs
 app.get("/api/all-devices", async (req, res) => {
   try {
-    
+    console.time("all-devices");
     const devices = await Device.find({}, "ip");
 
-    
+    console.timeEnd("all-devices");
+
     res.json(devices.map((d) => d.ip)); //! Converting to LowerCase()
   } catch (error) {
     console.error("Error fetching registered devices:", error);
 
-    logger.error({
-      error: error.message,
-      stack: error.stack
-    }, "Error fetching registered devices");
+    logger.error(
+      {
+        error: error.message,
+        stack: error.stack,
+      },
+      "Error fetching registered devices",
+    );
 
     res.status(500).json({ error: "Failed to fetch devices" });
   }
@@ -611,7 +657,7 @@ app.get("/api/all-devices", async (req, res) => {
 // ✅ Get latest reading by MAC
 app.get("/api/device/:ip", async (req, res) => {
   try {
-    const ip = req.params.ip
+    const ip = req.params.ip;
     const device = await Device.findOne({ ip });
 
     if (!device || device.status !== "approved") {
@@ -627,31 +673,34 @@ app.get("/api/device/:ip", async (req, res) => {
   } catch (err) {
     console.error("Error fetching device data:", err);
 
-    logger.error({
-      error: err.message,
-      stack: err.stack,
-      ip: req.params.ip
-    }, "Error fetching device data");
+    logger.error(
+      {
+        error: err.message,
+        stack: err.stack,
+        ip: req.params.ip,
+      },
+      "Error fetching device data",
+    );
 
     res.status(500).json({ error: "Failed to fetch reading" });
   }
 });
 
-// ✅ APPROVING DEVICE 
+// ✅ APPROVING DEVICE
 app.put("/api/device/approve/:ip", authMiddleware, async (req, res) => {
   try {
     if (req.user.role !== "admin") {
       return res.status(403).json({ error: "Unauthorized" });
     }
 
-    console.log("Checking admin login")
+    console.log("Checking admin login");
 
     const ip = req.params.ip;
 
     const device = await Device.findOne({ ip });
     if (!device) return res.status(404).json({ error: "Device not found" });
 
-    console.log("Checking device")
+    console.log("Checking device");
 
     if (device.status === "approved") {
       return res.status(400).json({ error: "Already approved" });
@@ -661,33 +710,35 @@ app.put("/api/device/approve/:ip", authMiddleware, async (req, res) => {
       device.createdBy = req.user.username;
     }
 
-    console.log("Checking device current status")
+    console.log("Checking device current status");
 
     device.status = "approved";
     device.approvedAt = new Date();
     device.approvedBy = req.user.username;
 
-    console.log("Saving device")
-    console.log(device)
+    console.log("Saving device");
+    console.log(device);
     await device.save();
-    logger.info("Device saved", device)
+    logger.info("Device saved", device);
 
     res.json(device);
-
   } catch (err) {
     console.error("Device approval failed:", err);
 
-    logger.error({
-      error: err.message,
-      stack: err.stack,
-      ip: req.params.ip
-    }, "Device approval failed");
+    logger.error(
+      {
+        error: err.message,
+        stack: err.stack,
+        ip: req.params.ip,
+      },
+      "Device approval failed",
+    );
 
     res.status(500).json({ error: "Approve failed" });
   }
 });
 
-// ✅ REJECT DEVICE 
+// ✅ REJECT DEVICE
 app.put("/api/device/reject/:ip", authMiddleware, async (req, res) => {
   try {
     if (req.user.role !== "admin") {
@@ -710,17 +761,19 @@ app.put("/api/device/reject/:ip", authMiddleware, async (req, res) => {
     await device.save();
 
     res.json(device);
-
   } catch (err) {
     console.error("Failed to fetch alarm summary:", err);
 
-    logger.error({
-      error: err.message,
-      stack: err.stack
-    }, "Failed to fetch alarm summary");
+    logger.error(
+      {
+        error: err.message,
+        stack: err.stack,
+      },
+      "Failed to fetch alarm summary",
+    );
 
     res.status(500).json({
-      error: "Failed to fetch alarm summary"
+      error: "Failed to fetch alarm summary",
     });
   }
 });
@@ -731,8 +784,8 @@ app.get("/api/alarms/current/summary", async (req, res) => {
     const devices = await Device.find(
       {},
       {
-        currentAlarms: 1
-      }
+        currentAlarms: 1,
+      },
     ).lean();
 
     let critical = 0;
@@ -748,93 +801,88 @@ app.get("/api/alarms/current/summary", async (req, res) => {
     res.json({
       critical,
       major,
-      minor
+      minor,
     });
-
   } catch (err) {
-    logger.error({
-      error: err.message,
-      stack: err.stack
-    }, "Failed to fetch alarm summary");
+    logger.error(
+      {
+        error: err.message,
+        stack: err.stack,
+      },
+      "Failed to fetch alarm summary",
+    );
     res.status(500).json({
-      error: "Failed to fetch alarm summary"
+      error: "Failed to fetch alarm summary",
     });
   }
 });
 
-
 app.get("/api/alarms/current", async (req, res) => {
-
   const severity = req.query.severity;
 
   const allowedSeverities = ["critical", "major", "minor"];
 
   if (!allowedSeverities.includes(severity)) {
     return res.status(400).json({
-      error: "Invalid severity. Use critical, major or minor"
+      error: "Invalid severity. Use critical, major or minor",
     });
   }
 
   try {
-
     const devices = await Device.find().lean();
 
     const result = [];
 
     for (const device of devices) {
+      const alarms = device.currentAlarms?.[severity] || [];
 
-      const alarms =
-        device.currentAlarms?.[severity] || [];
-
-      alarms.forEach(alarm => {
+      alarms.forEach((alarm) => {
         result.push({
           ip: device.ip,
           deviceName: device.deviceName,
           location: device.location,
-          alarm
+          alarm,
         });
       });
-
     }
 
     res.json(result);
-
   } catch (err) {
     console.error("Failed to fetch current alarms:", err);
 
-    logger.error({
-      error: err.message,
-      stack: err.stack,
-      severity
-    }, "Failed to fetch current alarms");
+    logger.error(
+      {
+        error: err.message,
+        stack: err.stack,
+        severity,
+      },
+      "Failed to fetch current alarms",
+    );
 
     res.status(500).json({
-      error: "Failed"
+      error: "Failed",
     });
   }
 });
 
 app.get("/api/device/:ip/alarms", async (req, res) => {
-
   const ip = req.params.ip;
 
   const device = await Device.findOne(
     { ip },
     {
-      currentAlarms: 1
-    }
+      currentAlarms: 1,
+    },
   );
 
   if (!device)
     return res.status(404).json({
-      error: "Device not found"
+      error: "Device not found",
     });
 
   res.json(device.currentAlarms);
-
 });
-// *====================  DEVICE API  ====================== 
-
+// *====================  DEVICE API  ======================
 
 // *==================== SNAPSHOTS API =====================
 // ✅ Serve snapshot images
@@ -845,13 +893,13 @@ app.get("/api/snapshots/:imageName", (req, res) => {
 
     if (!rawIP) {
       return res.status(400).json({
-        error: "IP address is required"
+        error: "IP address is required",
       });
     }
 
     if (!imageName) {
       return res.status(400).json({
-        error: "Image name is required"
+        error: "Image name is required",
       });
     }
 
@@ -871,17 +919,19 @@ app.get("/api/snapshots/:imageName", (req, res) => {
     // Send the image file
     res.sendFile(imagePath);
   } catch (dirErr) {
-
     console.error("Snapshots directory error:", dirErr);
 
-    logger.error({
-      error: dirErr.message,
-      stack: dirErr.stack,
-      ip: req.query.ip
-    }, "Snapshots directory not found or could not be read");
+    logger.error(
+      {
+        error: dirErr.message,
+        stack: dirErr.stack,
+        ip: req.query.ip,
+      },
+      "Snapshots directory not found or could not be read",
+    );
 
     return res.status(500).json({
-      error: "Failed to read snapshot"
+      error: "Failed to read snapshot",
     });
   }
 });
@@ -899,10 +949,9 @@ app.get("/api/snapshots", (req, res) => {
       return res.status(400).json({ error: "IP address is required" });
     }
 
-    // Extract the last part of MAC 
+    // Extract the last part of IP
     const ipSuffix = rawIP.slice(8).replace(/[. ]/g, "_"); // Gets characters 9-16 (0-indexed)
     // console.log("MAC ADDRESS: ", macSuffix);
-
 
     const snapshotsDir = `${snapshotOutputDir}/${ipSuffix}`;
     console.log(snapshotsDir);
@@ -915,20 +964,26 @@ app.get("/api/snapshots", (req, res) => {
         .sort((a, b) => {
           // Extract YYMMDDHHMMSS format for comparison
           const getKey = (filename) => {
-            const match = filename.match(/_(\d{2})_(\d{2})_(\d{2})_(\d{2})_(\d{2})_(\d{2})\./);
-            return match ? match[3] + match[2] + match[1] + match[4] + match[5] + match[6] : '0';
+            const match = filename.match(
+              /_(\d{2})_(\d{2})_(\d{2})_(\d{2})_(\d{2})_(\d{2})\./,
+            );
+            return match
+              ? match[3] + match[2] + match[1] + match[4] + match[5] + match[6]
+              : "0";
           };
           return getKey(b).localeCompare(getKey(a));
         })
         .slice(0, 15); // Get last 15 images
-      console.log("snapshots: ", files)
+      console.log("snapshots: ", files);
     } catch (dirErr) {
-
-      logger.error({
-        error: dirErr.message,
-        stack: dirErr.stack,
-        ip: req.query.ip
-      }, "Snapshots directory not found or could not be read");
+      logger.error(
+        {
+          error: dirErr.message,
+          stack: dirErr.stack,
+          ip: req.query.ip,
+        },
+        "Snapshots directory not found or could not be read",
+      );
       // Return empty array if directory not found
       files = [];
     }
@@ -936,24 +991,25 @@ app.get("/api/snapshots", (req, res) => {
   } catch (err) {
     console.error("Error reading snapshots:", err);
 
-    logger.error({
-      error: err.message,
-      stack: err.stack,
-      ip: req.query.ip
-    }, "Error reading snapshots");
+    logger.error(
+      {
+        error: err.message,
+        stack: err.stack,
+        ip: req.query.ip,
+      },
+      "Error reading snapshots",
+    );
 
     res.status(500).json({ error: "Failed to read snapshots" });
   }
 });
 // *==================== SNAPSHOTS API =====================
 
-
 // ✅ Command endpoint
 app.post("/command", (req, res) => {
   try {
-
     const { ip, command } = req.body;
-    console.log("Command received: ", command);
+    // console
     // const normalizedIP = ip.toLowerCase(); //! Converting to LowerCase()
     const deviceSocket = connectedDevices.get(ip);
 
@@ -962,38 +1018,41 @@ app.post("/command", (req, res) => {
       return res.status(404).json({ message: `Device ${ip} not connected` });
     }
 
-    console.log("Sending command: ");
-
     const buffer = Buffer.from(command, "utf-8");
     deviceSocket.write(buffer, (err) => {
       if (err) {
         console.error(`Failed to send command to ${ip}:`, err);
 
-        logger.error({
-          error: err.message,
-          stack: err.stack,
-          ip: ip,
-          command
-        }, "Failed to send command to device");
-
-	console.log(" sent command");
+        logger.error(
+          {
+            error: err.message,
+            stack: err.stack,
+            ip: ip,
+            command,
+          },
+          "Failed to send command to device",
+        );
 
         return res
           .status(500)
           .json({ message: `Error sending command to ${ip}` });
       }
+      console.log("Command sent");
       logger.info(`Sent command "${command}" to ${ip}`);
       res.json({ message: `${command} sent to ${ip}` });
     });
   } catch (error) {
     console.error("Failed to write command to the device:", error);
 
-    logger.error({
-      error: error.message,
-      stack: error.stack,
-      ip: req.body?.ip,
-      command: req.body?.command
-    }, "Failed to write command to the device");
+    logger.error(
+      {
+        error: error.message,
+        stack: error.stack,
+        ip: req.body?.ip,
+        command: req.body?.command,
+      },
+      "Failed to write command to the device",
+    );
 
     res.status(500).json({ error: "Failed to write command to the device" });
   }
@@ -1009,27 +1068,29 @@ app.get("/api/readings", async (req, res) => {
   } catch (error) {
     console.error("Error fetching readings:", error);
 
-    logger.error({
-      error: error.message,
-      stack: error.stack
-    }, "Error fetching readings");
+    logger.error(
+      {
+        error: error.message,
+        stack: error.stack,
+      },
+      "Error fetching readings",
+    );
 
     res.status(500).json({ error: "Failed to fetch readings" });
   }
 });
 
-
 // ✅ Get logs saved in PC
 app.post("/api/log-command", (req, res) => {
   try {
-
     const { date, ip, command, status, message } = req.body;
 
     // console.log(date, ip, command, status, message);
 
     const now = new Date();
-    const fileName = `${now.getDate()}_${now.getMonth() + 1
-      }_${now.getHours()}.out`;
+    const fileName = `${now.getDate()}_${
+      now.getMonth() + 1
+    }_${now.getHours()}.out`;
     // const outLogDir = "C:/CommandLogs/out";
 
     // if (!fs.existsSync(outLogDir)) {
@@ -1070,19 +1131,22 @@ app.post("/api/log-command", (req, res) => {
       command,
       status,
       message,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
 
     res.json({ message: "Log received" });
   } catch (error) {
     console.error("Error while logging command:", error);
 
-    logger.error({
-      error: error.message,
-      stack: error.stack,
-      ip,
-      command
-    }, "Error while logging command");
+    logger.error(
+      {
+        error: error.message,
+        stack: error.stack,
+        ip,
+        command,
+      },
+      "Error while logging command",
+    );
 
     res.status(500).json({ error: "Failed to log" });
   }
@@ -1135,10 +1199,7 @@ app.post("/api/log-command", (req, res) => {
 //     console.error("Error fetching device logs:", err?.stack);
 //   }
 
-
 // });
-
-
 
 // OLD LOG FILE PARSING
 // function parseOldAlarm(payload, timestamp) {
@@ -1214,9 +1275,29 @@ app.post("/api/log-command", (req, res) => {
 //   );
 // }
 
+/*
+ * ALARM HISTORY API
+ *
+ * Request Query Parameters:
+ * - ip    : Device IP address
+ * - from  : Start date and time for alarm history
+ * - to    : End date and time for alarm history
+ * - page  : Page number for pagination (default: 1)
+ * - limit : Number of entries per page (default: 100)
+ *
+ * Returns:
+ * - ip         : Requested device IP address
+ * - from       : Requested start date and time
+ * - to         : Requested end date and time
+ * - entries    : Alarm history entries within the selected date range
+ * - total      : Total number of matching alarm entries
+ * - page       : Current page number
+ * - limit      : Number of entries per page
+ * - totalPages : Total number of available pages
+ */
 app.get("/api/alarm-history", async (req, res) => {
   try {
-    console.log("Calling Alarm History API")
+    console.log("Calling Alarm History API");
     const { ip, from, to, page = 1, limit = 100 } = req.query;
 
     const pageNo = Number(page);
@@ -1234,7 +1315,9 @@ app.get("/api/alarm-history", async (req, res) => {
     }
 
     if (toDate.getTime() < fromDate.getTime()) {
-      return res.status(400).json({ error: "Invalid date range: 'to' must be >= 'from'" });
+      return res
+        .status(400)
+        .json({ error: "Invalid date range: 'to' must be >= 'from'" });
     }
 
     const macFolder = ip.replace(/[:. ]/g, "_");
@@ -1245,13 +1328,12 @@ app.get("/api/alarm-history", async (req, res) => {
     console.log("Base Dir: ", baseDir);
 
     if (!fs.existsSync(baseDir)) {
-      console.log("Sending empty")
+      console.log("Sending empty");
       return res.json({ ip, from, to, entries: [] });
     }
     let cache = alarmHistoryCache.get(cacheKey);
 
     if (cache) {
-
       console.log("✅ Returning alarm history from cache");
 
       const start = (pageNo - 1) * pageLimit;
@@ -1261,21 +1343,17 @@ app.get("/api/alarm-history", async (req, res) => {
         total: cache.total,
         page: pageNo,
         limit: pageLimit,
-        totalPages: Math.ceil(cache.total / pageLimit)
+        totalPages: Math.ceil(cache.total / pageLimit),
       });
-
     }
 
     // 🟢 Generate all hour blocks between from and to
-    const filesToScan = getAlarmFiles(
-      baseDir,
-      fromDate,
-      toDate
-    );
+    const filesToScan = getAlarmFiles(baseDir, fromDate, toDate);
 
     console.log("Files to scan:", filesToScan);
 
-    const entries = [];
+    const alarmMap = new Map();
+    // const entries = [];
 
     if (filesToScan.length === 0) {
       return res.json({ ip, from, to, entries: [] });
@@ -1283,7 +1361,7 @@ app.get("/api/alarm-history", async (req, res) => {
 
     // 🟢 Stream each file
     for (const filePath of filesToScan) {
-      console.log("file loop")
+      console.log("file loop");
       const rl = readline.createInterface({
         input: fs.createReadStream(filePath),
         crlfDelay: Infinity,
@@ -1293,46 +1371,138 @@ app.get("/api/alarm-history", async (req, res) => {
         const text = String(line || "").trim();
         if (!text) continue;
 
-        // Timestamp is always the first bracket.
-        const tsMatch = text.match(/^\s*\[([^\]]+)\]/);
-        if (!tsMatch) continue;
+        let timestamp = null;
 
-        const timestamp = parseIstLogTimestamp(tsMatch[1]);
-        if (!timestamp) continue;
-        if (timestamp < fromDate || timestamp > toDate) continue;
+        const pipeParts = text.split("|").map((part) => part.trim());
+
+        /*
+         * =====================================================
+         * NEW FIXED-COLUMN FORMAT
+         * =====================================================
+         *
+         * log_timestamp | alert_id | device_ip | severity |
+         * alarm | alarm_value | start_time | end_time | status
+         */
+
+        if (pipeParts.length === 9) {
+          timestamp = new Date(pipeParts[0]);
+
+          if (isNaN(timestamp.getTime())) {
+            continue;
+          }
+        } else {
+          /*
+           * =====================================================
+           * OLD LOG FORMAT
+           * =====================================================
+           *
+           * [24/2/2026, 3:00:20 pm] | ...
+           */
+          const tsMatch = text.match(/^\s*\[([^\]]+)\]/);
+
+          if (!tsMatch) continue;
+
+          timestamp = parseIstLogTimestamp(tsMatch[1]);
+
+          if (!timestamp) continue;
+        }
+
+        if (timestamp < fromDate || timestamp > toDate) {
+          continue;
+        }
 
         let payload = null;
 
         if (!text.includes("ALARM:")) {
-
           const pipeParts = text
             .split("|")
-            .map(p => p.trim())
+            .map((p) => p.trim())
             .filter(Boolean);
 
-          if (pipeParts.length < 3)
-            continue;
+          if (pipeParts.length < 3) continue;
 
           payload = pipeParts.slice(2).join(" | ");
         }
 
-        const parsedEntries = parseAlarmLine(
-          text,
-          payload,
-          timestamp
-        );
+        const parsedEntries = parseAlarmLine(text, payload, timestamp);
 
-        entries.push(...parsedEntries);
+        if (!Array.isArray(parsedEntries)) {
+          continue;
+        }
+
+        for (const alarmEntry of parsedEntries) {
+          /*
+           * Old alarm formats may not have alert_id.
+           *
+           * Keep them separately so existing historical
+           * logs continue working.
+           */
+          if (!alarmEntry.alert_id) {
+            const fallbackKey = `${alarmEntry.device_ip || ip}_${alarmEntry.timestamp || timestamp.toISOString()}_${alarmEntry.alarm || ""}_${alarmMap.size}`;
+
+            alarmMap.set(fallbackKey, alarmEntry);
+
+            continue;
+          }
+
+          const existingAlarm = alarmMap.get(alarmEntry.alert_id);
+
+          /*
+           * First occurrence of this alarm lifecycle.
+           */
+
+          if (!existingAlarm) {
+            alarmMap.set(alarmEntry.alert_id, alarmEntry);
+
+            continue;
+          }
+
+          /*
+           * Same alarm_id.
+           *
+           * Keep the latest information.
+           */
+
+          existingAlarm.log_timestamp = alarmEntry.log_timestamp;
+
+          existingAlarm.alarm_value = alarmEntry.alarm_value;
+
+          existingAlarm.severity = alarmEntry.severity;
+
+          /*
+           * If alarm has been cleared,
+           * update its final state.
+           */
+
+          if (String(alarmEntry.status).toLowerCase() === "cleared") {
+            existingAlarm.status = alarmEntry.status;
+
+            existingAlarm.end_time = alarmEntry.end_time;
+          }
+
+          alarmMap.set(alarmEntry.alert_id, existingAlarm);
+        }
       }
     }
-    console.log("Logs send successfully to UI")
+    console.log("Logs send successfully to UI");
+
+    const entries = Array.from(alarmMap.values());
+
+    entries.sort((a, b) => {
+      const timeA = new Date(
+        a.start_time || a.log_timestamp || a.timestamp,
+      ).getTime();
+
+      const timeB = new Date(
+        b.start_time || b.log_timestamp || b.timestamp,
+      ).getTime();
+
+      return timeB - timeA;
+    });
 
     const start = (pageNo - 1) * pageLimit;
 
-    const pageEntries = entries.slice(
-      start,
-      start + pageLimit
-    );
+    const pageEntries = entries.slice(start, start + pageLimit);
 
     res.json({
       ip,
@@ -1342,35 +1512,43 @@ app.get("/api/alarm-history", async (req, res) => {
       total: entries.length,
       page: pageNo,
       limit: pageLimit,
-      totalPages: Math.ceil(entries.length / pageLimit)
+      totalPages: Math.ceil(entries.length / pageLimit),
     });
 
-    alarmHistoryCache.set(
-      cacheKey,
-      entries,
-      baseDir
-    );
-
+    alarmHistoryCache.set(cacheKey, entries, baseDir);
   } catch (error) {
     console.error("Error in /api/alarm-history:", error);
 
-    logger.error({
-      error: error.message,
-      stack: error.stack,
-      ip: req.query.ip,
-      from: req.query.from,
-      to: req.query.to
-    }, "Error in /api/alarm-history");
+    logger.error(
+      {
+        error: error.message,
+        stack: error.stack,
+        ip: req.query.ip,
+        from: req.query.from,
+        to: req.query.to,
+      },
+      "Error in /api/alarm-history",
+    );
 
     res.status(500).json({
       ok: false,
       error: "Failed to fetch alarm history",
-      message: "Error in fetching alarm logs"
+      message: "Error in fetching alarm logs",
     });
   }
-})
+});
 
-// HISTORICAL DATA
+/*
+ * HISTORICAL DATA API
+ *
+ * Request Query Parameters:
+ * - ip       : Device IP address
+ * - datetime : Selected date and time
+ *
+ * Returns:
+ * - readings       : All sensor readings for the selected date
+ * - atSelectedTime : Latest sensor reading at or before the selected datetime
+ */
 app.get("/api/historical-data", async (req, res) => {
   const { ip, datetime } = req.query;
   console.log("IP: ", ip, " | Date ", datetime);
@@ -1404,41 +1582,45 @@ app.get("/api/historical-data", async (req, res) => {
   } catch (err) {
     console.error("Historical data error:", err);
 
-    logger.error({
-      error: err.message,
-      stack: err.stack,
-      ip: req.query.ip,
-      datetime: req.query.datetime
-    }, "Historical data error");
+    logger.error(
+      {
+        error: err.message,
+        stack: err.stack,
+        ip: req.query.ip,
+        datetime: req.query.datetime,
+      },
+      "Historical data error",
+    );
 
     res.status(500).json({ error: "Failed to fetch historical data" });
   }
 });
 
 app.post("/api/cloud-readings", async (req, res) => {
-
   try {
     await SensorReading.create(req.body);
     res.json({
-      success: true
+      success: true,
     });
   } catch (err) {
     console.error("Cloud reading upload failed:", err);
 
-    logger.error({
-      error: err.message,
-      stack: err.stack
-    }, "Cloud reading upload failed");
+    logger.error(
+      {
+        error: err.message,
+        stack: err.stack,
+      },
+      "Cloud reading upload failed",
+    );
 
     res.status(500).json({
-      success: false
+      success: false,
     });
   }
 });
 
 // ✅ Debug routes
 // app.use('/debug', require('./auth/debug'));
-
 
 // 📡 TCP Server
 const BULK_SAVE_LIMIT = 1000;
@@ -1460,7 +1642,6 @@ const snapshotOutputDir = process.env.SNAP_DIR;
 
 const logDir = outLogDir;
 
-
 function dirCheck(dir, enabled) {
   if (!enabled) return;
   try {
@@ -1468,11 +1649,14 @@ function dirCheck(dir, enabled) {
   } catch (err) {
     console.error(`Failed to create directory ${dir}:`, err);
 
-    logger.error({
-      error: err.message,
-      stack: err.stack,
-      directory: dir
-    }, "Failed to create directory");
+    logger.error(
+      {
+        error: err.message,
+        stack: err.stack,
+        directory: dir,
+      },
+      "Failed to create directory",
+    );
   }
 }
 
@@ -1489,7 +1673,7 @@ dirCheck(snapshotOutputDir, SNAP_CMD);
   Without passing any argument will get below Data & Time format: 
   20/01/26 12:45:52
 */
-function getFormattedDateTime(outType = 'string') {
+function getFormattedDateTime(outType = "string") {
   // Pass any string to function if you want output in second way
   const today = new Date();
   const pad = (n) => String(n).padStart(2, "0");
@@ -1500,7 +1684,7 @@ function getFormattedDateTime(outType = 'string') {
   const MM = pad(today.getMinutes());
   const SS = pad(today.getSeconds());
 
-  if (outType === 'string') {
+  if (outType === "string") {
     return `${dd}/${mm}/${yy} ${HH}:${MM}:${SS}`;
   } else {
     return `${dd}_${mm}_${yy}_${HH}_${MM}_${SS}`;
@@ -1520,48 +1704,56 @@ function sendX(socket) {
 // Function to delete DB Records
 async function DBCleanup() {
   try {
-    const MAX_DOCS = parseInt(process.env.MAX_SENSOR_DOCS || '50000', 10);
+    const MAX_DOCS = parseInt(process.env.MAX_SENSOR_DOCS || "50000", 10);
     // const RETENTION_DAYS = parseInt(process.env.RETENTION_DAYS || '15', 10);
 
     // Getting 'SensorReading' count
     const sensorRecordsCount = await SensorReading.countDocuments();
     if (sensorRecordsCount === 0) {
-      console.log("No Sensor Data found", 'CLEANUP');
+      console.log("No Sensor Data found", "CLEANUP");
       return;
     }
 
-
     if (sensorRecordsCount > MAX_DOCS) {
       // Getting the boundary Document of SensorReading to delete all documents before from that bounday date
-      const boundaryDoc = await SensorReading
-        .findOne({}, { timestamp: 1 })
+      const boundaryDoc = await SensorReading.findOne({}, { timestamp: 1 })
         .sort({ timestamp: -1 }) // Latest Doc first
         .skip(MAX_DOCS - 1);
 
       if (!boundaryDoc || !boundaryDoc.timestamp) {
         console.error("Unable to determine boundary timestamp for capping");
 
-        logger.error({
-          stage: "CLEANUP"
-        }, "Unable to determine boundary timestamp for capping");
+        logger.error(
+          {
+            stage: "CLEANUP",
+          },
+          "Unable to determine boundary timestamp for capping",
+        );
 
         return;
       }
 
       // Deleting Documents
       const capRes = await SensorReading.deleteMany({
-        timestamp: { $lt: boundaryDoc.timestamp }
+        timestamp: { $lt: boundaryDoc.timestamp },
       });
-      if (eMS_LOGS) console.log(`Count capping: deleted ${capRes.deletedCount} docs older than ${boundaryDoc.timestamp.toISOString()}`, 'CLEANUP');
+      if (eMS_LOGS)
+        console.log(
+          `Count capping: deleted ${capRes.deletedCount} docs older than ${boundaryDoc.timestamp.toISOString()}`,
+          "CLEANUP",
+        );
     }
   } catch (err) {
     console.error("Error in DB cleanup:", err);
 
-    logger.error({
-      error: err.message,
-      stack: err.stack,
-      stage: "CLEANUP"
-    }, "Error in DB cleanup");
+    logger.error(
+      {
+        error: err.message,
+        stack: err.stack,
+        stage: "CLEANUP",
+      },
+      "Error in DB cleanup",
+    );
   }
 }
 
@@ -1571,7 +1763,8 @@ function hourlyDBCleanup() {
 
   const runCleanup = async () => {
     if (isCleaning) {
-      if (eMS_LOGS) logger.info("Cleanup already running, skipping this tick", 'CLEANUP');
+      if (eMS_LOGS)
+        logger.info("Cleanup already running, skipping this tick", "CLEANUP");
       return;
     }
     isCleaning = true;
@@ -1591,12 +1784,12 @@ function hourlyDBCleanup() {
 
 hourlyDBCleanup();
 
-// Function to delete log files older than 3 days
+// Function to delete log files older than 30 days
 function deleteLogFiles() {
   // const IncLogDir = "C:/CommandLogs/inc";
 
-  const daysThreshold = 3;
-  const thresholdTime = Date.now() - (daysThreshold * 24 * 60 * 60 * 1000);
+  const daysThreshold = 30;
+  const thresholdTime = Date.now() - daysThreshold * 24 * 60 * 60 * 1000;
 
   if (!IncLogDir) {
     return;
@@ -1604,20 +1797,23 @@ function deleteLogFiles() {
 
   fs.readdir(IncLogDir, (err, macDirs) => {
     if (err) {
-      if (err.code === 'ENOENT') return;
+      if (err.code === "ENOENT") return;
 
       console.error("Error reading log directory:", err);
 
-      logger.error({
-        error: err.message,
-        stack: err.stack,
-        directory: IncLogDir
-      }, "Error reading log directory");
+      logger.error(
+        {
+          error: err.message,
+          stack: err.stack,
+          directory: IncLogDir,
+        },
+        "Error reading log directory",
+      );
 
       return;
     }
-    macDirs.forEach(macDir => {
 
+    macDirs.forEach((macDir) => {
       const fullDir = path.join(IncLogDir, macDir);
 
       if (!fs.statSync(fullDir).isDirectory()) return;
@@ -1630,20 +1826,23 @@ function deleteLogFiles() {
             return;
           }
 
-          files.forEach(file => {
-            if (!file.endsWith('.inc')) return;
+          files.forEach((file) => {
+            if (!file.endsWith(".inc")) return;
 
             const filePath = path.join(fullDir, file);
             fs.stat(filePath, (err, stats) => {
               if (err || !stats) return;
 
               if (stats.mtimeMs < thresholdTime) {
-                fs.unlink(filePath, err => {
+                fs.unlink(filePath, (err) => {
                   if (err) {
-                    logger.error({
-                      error: err.message,
-                      filePath
-                    }, "Failed to delete old log file");
+                    logger.error(
+                      {
+                        error: err.message,
+                        filePath,
+                      },
+                      "Failed to delete old log file",
+                    );
                   }
                 });
               }
@@ -1663,24 +1862,26 @@ function logCleanupScheduler() {
 logCleanupScheduler();
 // *=================================== CLEANING CODE ===================================
 
-
 function getLogStream(filePath) {
   if (!logStreams[filePath]) {
     // make sure directory exists
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
 
     logStreams[filePath] = fs.createWriteStream(filePath, {
-      flags: "a" // append mode
+      flags: "a", // append mode
     });
 
     logStreams[filePath].on("error", (err) => {
       console.error("Log stream error:", err);
 
-      logger.error({
-        error: err.message,
-        stack: err.stack,
-        filePath
-      }, "Log stream error");
+      logger.error(
+        {
+          error: err.message,
+          stack: err.stack,
+          filePath,
+        },
+        "Log stream error",
+      );
     });
   }
 
@@ -1699,14 +1900,14 @@ const tempCalibrationTable = [
   { min: 31, max: 40, factor: 0.05 },
   { min: 41, max: 50, factor: 0.07 },
   { min: 51, max: 60, factor: 0.09 },
-  { min: 61, max: 70, factor: 0.10 },
+  { min: 61, max: 70, factor: 0.1 },
 ];
 
 function calibrateTemperature(temp) {
   if (typeof temp !== "number") return temp;
 
   const range = tempCalibrationTable.find(
-    r => temp >= r.min && temp <= r.max
+    (r) => temp >= r.min && temp <= r.max,
   );
 
   if (!range) return temp;
@@ -1716,65 +1917,97 @@ function calibrateTemperature(temp) {
 
 // SEND DATA TO AWS
 async function sendToCloud(reading) {
-
   try {
-
     await axios.post(
       "http://98.88.250.83/api/cloud-readings",
-      reading.toObject()
+      reading.toObject(),
     );
   } catch (err) {
     console.log("Cloud not reachable");
   }
 }
 
+// async function updateDeviceStatus(ip) {
+//   try {
+//     const now = new Date();
+
+//     // const device = await Device.findOne({ ip });
+
+//     // if (!device) return;
+
+//     // DeviceStatus was DOWN -> make it UP
+//     //! HERE WE CAN MARK DEVICE PING AS SUCCESS
+//     const result = await Device.updateOne(
+//       {
+//         ip,
+//         deviceStatus: { $ne: "UP" },
+//       },
+//       {
+//         $set: {
+//           deviceStatus: "UP",
+//           lastPacketTime: now,
+//           lastStatusChangeTimeTicks: Date.now(),
+//         },
+//       },
+//     );
+
+//     // Already UP -> only refresh heartbeat
+//     if (result.modifiedCount === 0) {
+//       await Device.updateOne(
+//         { ip },
+//         {
+//           $set: {
+//             lastPacketTime: now,
+//           },
+//         },
+//       );
+//     }
+//   } catch (err) {
+//     console.error(`Failed to update device status for ${ip}:`, err);
+
+//     logger.error(
+//       {
+//         error: err.message,
+//         stack: err.stack,
+//         ip,
+//       },
+//       "Failed to update device status",
+//     );
+//   }
+// }
+
 async function updateDeviceStatus(ip) {
   try {
     const now = new Date();
 
-    // const device = await Device.findOne({ ip });
-
-    // if (!device) return;
-
-    // Device was DOWN -> make it UP
-    const result = await Device.updateOne(
-      {
-        ip,
-        deviceStatus: { $ne: "UP" }
-      },
+    // Update status and change timestamp only when transitioning to UP.
+    const transitionResult = await Device.updateOne(
+      { ip, deviceStatus: { $ne: "UP" } },
       {
         $set: {
           deviceStatus: "UP",
           lastPacketTime: now,
-          lastStatusChangeTimeTicks: Date.now()
-        }
-      }
+          lastStatusChangeTimeTicks: Date.now(),
+        },
+      },
     );
 
-    // Already UP -> only refresh heartbeat
-    if (result.modifiedCount === 0) {
-      await Device.updateOne(
+    if (transitionResult.matchedCount === 0) {
+      // Device may already be UP, or it may not exist.
+      const heartbeatResult = await Device.updateOne(
         { ip },
-        {
-          $set: {
-            lastPacketTime: now
-          }
-        }
+        { $set: { lastPacketTime: now } },
       );
+
+      if (heartbeatResult.matchedCount === 0) {
+        console.warn(`[DeviceStatus] No registered device found for IP ${ip}`);
+        return;
+      }
     }
+
+    updateDeviceStatusCache(ip, "UP");
   } catch (err) {
-
-    console.error(
-      `Failed to update device status for ${ip}:`,
-      err
-    );
-
-    logger.error({
-      error: err.message,
-      stack: err.stack,
-      ip
-    }, "Failed to update device status");
-
+    console.error(`[DeviceStatus] Failed to update ${ip}:`, err);
   }
 }
 
@@ -1784,39 +2017,40 @@ setInterval(async () => {
   const toSave = readingBuffer.splice(0, BULK_SAVE_LIMIT);
 
   try {
-    await SensorReading.insertMany(toSave, { ordered: false })
+    await SensorReading.insertMany(toSave, { ordered: false });
 
-    const uniqueMacs = [...new Set(toSave.map(r => r.ip))];
+    const uniqueMacs = [...new Set(toSave.map((r) => r.ip))];
 
-    await Promise.all(
-      uniqueMacs.map(ip => updateDeviceStatus(ip))
-    );
-
+    await Promise.all(uniqueMacs.map((ip) => updateDeviceStatus(ip)));
   } catch (err) {
     console.error("Periodic bulk save error:", err);
 
-    logger.error({
-      error: err.message,
-      stack: err.stack,
-      operation: "periodic bulk save"
-    }, "Periodic bulk save error");
+    logger.error(
+      {
+        error: err.message,
+        stack: err.stack,
+        operation: "periodic bulk save",
+      },
+      "Periodic bulk save error",
+    );
   }
-
 }, 2000);
-
 
 const server = net.createServer((socket) => {
   // let buffer = Buffer.alloc(0);
   socket.buffer = Buffer.alloc(0);
   let packetCount = 0;
 
-
   const clientInfo = `${socket.remoteAddress}:${socket.remotePort}`;
   const connStart = Date.now();
   if (eMS_LOGS) {
-    console.log(`[LOG] New TCP Connection from ${clientInfo} at ${new Date(connStart).toISOString()}`);
+    console.log(
+      `[LOG] New TCP Connection from ${clientInfo} at ${new Date(connStart).toISOString()}`,
+    );
   }
-  console.log(`[LOG] New TCP Connection from ${clientInfo} at ${new Date(connStart).toISOString()}`);
+  console.log(
+    `[LOG] New TCP Connection from ${clientInfo} at ${new Date(connStart).toISOString()}`,
+  );
   logger.info(`New TCP Connection from`, clientInfo);
 
   socket.on("data", async (data) => {
@@ -1831,7 +2065,7 @@ const server = net.createServer((socket) => {
       console.log("ASCII:", JSON.stringify(data.toString("ascii")));
       console.log(
         "EVENT COUNT:",
-        (data.toString("ascii").match(/#EVENT/g) || []).length
+        (data.toString("ascii").match(/#EVENT/g) || []).length,
       );
       console.log("========================================");
     }
@@ -1841,13 +2075,13 @@ const server = net.createServer((socket) => {
     try {
       // debug.bufferStats.discardedBytes.totalBytes += data.length;
 
-      console.log(`Raw data received ${data.toString('hex')} with length (${data.length} bytes) from`, clientInfo);
+      // console.log(`Raw data received ${data.toString('hex')} with length (${data.length} bytes) from`, clientInfo);
       // if (eMS_LOGS) {
       console.log(
         `Raw data received ${packetCount} with length ${data.length} from`,
-        clientInfo
+        clientInfo,
       );
-      // }   
+      // }
       // packetCount++;
 
       // console.log("Raw data received")
@@ -1863,9 +2097,9 @@ const server = net.createServer((socket) => {
 
         // Handle protocol preamble once after device restart
         if (!socket.preambleHandled && socket.buffer.length >= 4) {
-          const preamble = socket.buffer.slice(0, 4).toString('ascii');
+          const preamble = socket.buffer.slice(0, 4).toString("ascii");
 
-          if (preamble === 'tcp2') {
+          if (preamble === "tcp2") {
             socket.buffer = socket.buffer.slice(4);
             socket.preambleHandled = true;
           }
@@ -1874,9 +2108,25 @@ const server = net.createServer((socket) => {
         // CHECK FOR PAST ALARM / DUMP PACKET
         // Total = 90 bytes
         // ============================================================
+        const hupsMarker = Buffer.from("#H");
+
+        if (socket.buffer.indexOf(hupsMarker) === 0) {
+          const hupsEnd = socket.buffer.indexOf(0x24); // '$'
+
+          if (hupsEnd === -1) {
+            break;
+          }
+
+          const hupsPacket = socket.buffer
+            .slice(0, hupsEnd + 1)
+            .toString("ascii");
+
+          socket.buffer = socket.buffer.slice(hupsEnd + 1);
+          console.log("HUPS PACKET RECEIVED:", hupsPacket);
+          continue;
+        }
 
         if (socket.buffer.length >= 14) {
-
           // ============================================================
           // CHECK FOR PAST ALARM / DUMP MESSAGE
           // ============================================================
@@ -1886,11 +2136,10 @@ const server = net.createServer((socket) => {
           const eventStart = socket.buffer.indexOf(eventMarker);
 
           if (eventStart !== -1) {
-
             // Find end of this dump message
             const eventEnd = socket.buffer.indexOf(
               Buffer.from("\r\n"),
-              eventStart
+              eventStart,
             );
 
             // Complete dump has not arrived yet
@@ -1900,17 +2149,12 @@ const server = net.createServer((socket) => {
 
             // Extract only:
             // #EVENT........................\r\n
-            const dumpPacket = socket.buffer.slice(
-              eventStart,
-              eventEnd + 2
-            );
+            const dumpPacket = socket.buffer.slice(eventStart, eventEnd + 2);
 
             // Remove everything through this dump packet
             socket.buffer = socket.buffer.slice(eventEnd + 2);
 
-            const dumpMessage = dumpPacket
-              .toString("ascii")
-              .trim();
+            const dumpMessage = dumpPacket.toString("ascii").trim();
 
             console.log("========================================");
             console.log("📜 PAST ALARM DUMP RECEIVED");
@@ -1918,12 +2162,14 @@ const server = net.createServer((socket) => {
             console.log(dumpMessage);
             console.log("========================================");
 
+            console.log("HUPS PKT: ", hupsMarker);
+
             // Send to existing Log Worker
             publishLog({
               type: "dump",
               ip: socket.remoteAddress,
               packet: dumpMessage,
-              timestamp: new Date().toISOString()
+              timestamp: new Date().toISOString(),
             });
 
             console.log("📤 Dump packet sent to log.queue");
@@ -1940,7 +2186,7 @@ const server = net.createServer((socket) => {
           break;
         }
 
-        const header = socket.buffer.slice(0, 8).toString('ascii');
+        const header = socket.buffer.slice(0, 8).toString("ascii");
 
         if (!/^[0-9a-fA-F]{8}$/.test(header)) {
           // corrupted / misaligned packet → resync
@@ -1948,26 +2194,17 @@ const server = net.createServer((socket) => {
           continue;
         }
 
-        const ipHexAscii = socket.buffer.slice(0, 8).toString('ascii');
+        const ipHexAscii = socket.buffer.slice(0, 8).toString("ascii");
 
         // Convert hex pairs → decimal
         const ip = ipHexAscii
           .match(/.{2}/g)
-          .map(h => parseInt(h, 16))
-          .join('.');
+          .map((h) => parseInt(h, 16))
+          .join(".");
 
         // Reject obvious garbage IPs
-        // if (!ip.startsWith('192.168.')) {
-        //   console.warn('🚫 Dropping invalid IP:', ip);
-        //   socket.buffer = socket.buffer.slice(1);
-        //   continue;
-        // }
-
-        // Check whether extracted IP is a registered device
-        if (!deviceCache.has(ip)) {
-          console.warn(`🚫 Dropping packet: Unknown device IP ${ip}`);
-
-          // Resync buffer because this may be garbage/misaligned data
+        if (!ip.startsWith("192.168.")) {
+          console.warn("🚫 Dropping invalid IP:", ip);
           socket.buffer = socket.buffer.slice(1);
           continue;
         }
@@ -1976,6 +2213,52 @@ const server = net.createServer((socket) => {
         const packet = socket.buffer.slice(0, 58);
         socket.buffer = socket.buffer.slice(58);
 
+        // Your existing live packet processing continues here...
+        // while (socket.buffer.length >= 58) {
+        //   packetCount++;
+
+        //   // Handle protocol preamble once after device restart
+        //   if (!socket.preambleHandled && socket.buffer.length >= 4) {
+        //     const preamble = socket.buffer.slice(0, 4).toString('ascii');
+
+        //     if (preamble === 'tcp2') {
+        //       socket.buffer = socket.buffer.slice(4);
+        //       socket.preambleHandled = true;
+        //     }
+        //   }
+
+        //   const header = socket.buffer.slice(0, 8).toString('ascii');
+
+        //   if (!/^[0-9a-fA-F]{8}$/.test(header)) {
+        //     // corrupted / misaligned packet → resync like MAC server
+        //     socket.buffer = socket.buffer.slice(1);
+        //     continue;
+        //   }
+
+        //   const ipHexAscii = socket.buffer.slice(0, 8).toString('ascii');
+
+        //   // Convert hex pairs → decimal
+        //   const ip = ipHexAscii
+        //     .match(/.{2}/g)
+        //     .map(h => parseInt(h, 16))
+        //     .join('.');
+
+        //   // Reject obvious garbage IPs
+        //   if (!ip.startsWith('192.168.')) {
+        //     console.warn('🚫 Dropping invalid IP:', ip);
+        //     socket.buffer = socket.buffer.slice(1);
+        //     continue;
+        //   }
+
+        //   // console.log("EXTRACTED IP: ", ip);
+
+        //   // wait for full packet
+        //   if (socket.buffer.length < 58) break;
+
+        //   const packet = socket.buffer.slice(0, 58);
+        //   socket.buffer = socket.buffer.slice(58);
+
+        // const ip = `${packet[0]}.${packet[1]}.${packet[2]}.${packet[3]}`;
 
         // console.log("Extracted IP: ", extractedIP);
         // const ip = ip; //! Converting to LowerCase()
@@ -1990,15 +2273,15 @@ const server = net.createServer((socket) => {
         const waterLogging = !!packet[31]; // "!!" -> converts true/false to 1/0
         const waterLeakage = !!packet[32];
 
-        const outputVoltage = +packet.readInt16LE(33).toFixed(2);
-        const hupsDVC = (+packet.readInt16LE(35).toFixed(2)) / 100;
-        const inputVoltage = +packet.readInt16LE(37).toFixed(2);
-        const hupsBatBackup = +packet.readInt16LE(39).toFixed(2); // HUPS Battery Backup
+        const outputVoltage = +packet.readInt16LE(33).toFixed(2) / 100;
+        const hupsDVC = +packet.readInt16LE(35).toFixed(2) / 100;
+        const inputVoltage = +packet.readInt16LE(37).toFixed(2) / 100;
+        const hupsBatVolt = packet.readInt16LE(39);
         const batteryBackup = +packet.readFloatLE(41).toFixed(2);
 
         const alarmActive = !!packet[45];
 
-        // 0 -> No alarm | 1 -> Fire | 2 -> Smoke
+        // 0 -> No alarm | 1 -> Fire | 2 -> Smoke | SmokeWait -> 80 | Smoke + Fire -> 81
         const fireAlarm = packet[46];
         const fanLevel1Running = !!packet[47];
         const fanLevel2Running = !!packet[48];
@@ -2009,26 +2292,27 @@ const server = net.createServer((socket) => {
         const fanStatusBits = packet.readUInt16LE(52);
 
         const pwsFailCount = packet[54]; // Password Failure Count
-        const hupsStat = packet[55]; // HUPS Alarms
-        const hupsSOC = packet[56]; // HUPS SOC
+        const hupsStat = packet[55];
+        const hupsRes = packet[56];
         const failMask = packet[57];
 
         const packetTimestamp = new Date();
-        const macDir = ip.replace(/[:. ]/g, '_');
+        const macDir = ip.replace(/[:. ]/g, "_");
 
         // Getting HUPS Alarms
-        const hupsAlarms = []
+        const hupsAlarms = [];
         /* 
             Extracting Individual HUPS Alarms from 'hupsStat' using bitwise operations. 
             Each alarm is represented by a single bit within the 'hupsStat' integer. 
             The loop iterates 8 times (for 8 alarms), extracting each bit and 
             storing the alarm status in the 'hupsAlarms' array.
-            
-            Mains | Rectifier | Inverter | O.Load 
         */
         for (let i = 0; i < 8; i++) {
-          hupsAlarms[i] = (hupsStat >> (i) & 0x01);
+          hupsAlarms[i] = (hupsStat >> i) & 0x01;
         }
+
+        // console.log(hupsAlarms);
+        // console.log(hupsBatVolt);
 
         /*
           Extracting Individual Fan Status from 'fanStatusBits' using bitwise operations. 
@@ -2040,45 +2324,30 @@ const server = net.createServer((socket) => {
         for (let i = 0; i < 6; i++) {
           fanStatus[i] = (fanStatusBits >> (i * 2)) & 0x03; // 0=off, 1=healthy, 2=faulty
         }
+        // console.log("Padding: ", padding);
+        console.log("firealarm : ", fireAlarm);
 
-
-         // console.log("Hups Batt. volt: ", hupsBatBackup);
-      	 // console.log("Out. Volt.: ", outputVoltage);
-      	 // console.log("Inp. Volt.: ", inputVoltage);
-      	 // console.log("Load Current: ",  hupsDVC);
-      	 console.log("HUPS Stat: ", hupsStat);
-      	 console.log("HUPS Alarms: ", hupsAlarms);
-         // console.log("HUPS SOC: ", hupsSOC);
         //* ===================== LOGGING EXTRACTED VALUES =====================
         if (eMS_LOGS) {
-
           // console.log("Humidity: ", humidity);
           // console.log("Input Voltage: ", inputVoltage);
-
-          console.log("firealarm : ", fireAlarm);
           // console.log("Fan Status: ", fanStatus);
           // console.log(fanLevel1Running, fanLevel2Running, fanLevel3Running, fanLevel4Running);
-
-          // console.log("BAT Volt: ", hupsBatBackup);
+          // console.log("BAT Volt: ", hupsBatVolt);
           // console.log("DV Current: ", hupsDVC);
-
           // console.log("Door status: ", doorStatus);
           // console.log("pwsFailCount: ", pwsFailCount);
-
         }
         //* ===================== LOGGING EXTRACTED VALUES =====================
-
-
 
         if (padding === 0x31 && !alreadyReplied) {
           sendX(socket);
           alreadyReplied = 40; // Load Balancing
         }
 
-
         // ===================== RABBITMQ SNAPSHOT LOGIC =====================
-        if ((padding === 0x43) && (doorStatus === "OPEN")) {
-          console.log("Inside snapshot", ip)
+        if (padding === 0x43 && doorStatus === "OPEN") {
+          console.log("Inside snapshot", ip);
           const deviceMeta = deviceCache.get(String(ip));
 
           if (!deviceMeta) {
@@ -2088,12 +2357,11 @@ const server = net.createServer((socket) => {
               ip,
               cameraType: deviceMeta.cameraType,
               cameraIP: ip,
-              requestedAt: new Date().toISOString()
+              requestedAt: new Date().toISOString(),
             });
           }
         }
         // ===================== RABBITMQ SNAPSHOT LOGIC =====================
-
 
         // ===================== Logging Incoming Data from Simulator | RABBITMQ =====================
         if (INC_LOGS_CMD) {
@@ -2106,18 +2374,15 @@ const server = net.createServer((socket) => {
             inputVoltage,
             outputVoltage,
             batteryBackup,
-            timestamp: new Date().toISOString()
+            timestamp: new Date().toISOString(),
           });
         }
         // ===================== Logging Incoming Data from Simulator | RABBITMQ =====================
-
-
 
         if (alreadyReplied) alreadyReplied--;
 
         // Extracting Fans Status
         // console.log("fanStatus", fanStatusBits);
-
 
         // console.log("Password Bit: ", pwsFailCount)// <-- Critical offset //Password
 
@@ -2157,7 +2422,6 @@ const server = net.createServer((socket) => {
           batteryBackupAlarm: batteryBackup < thresholds.batteryBackup.min,
         };
 
-
         publishAlarm({
           ip,
           humidity,
@@ -2179,7 +2443,7 @@ const server = net.createServer((socket) => {
           overStatus: hupsAlarms[3],
           mptStatus: hupsAlarms[4],
           mosfStatus: hupsAlarms[5],
-          timestamp: new Date()
+          timestamp: new Date(),
         });
 
         // ========================== RABBIT MQ ALARM WORKER ==========================
@@ -2201,7 +2465,7 @@ const server = net.createServer((socket) => {
           outputVoltage,
           hupsDVC,
           inputVoltage,
-          hupsBatBackup,
+          hupsBatVolt,
           batteryBackup,
           alarmActive,
           fireAlarm,
@@ -2223,12 +2487,13 @@ const server = net.createServer((socket) => {
           overStatus: hupsAlarms[3],
           mptStatus: hupsAlarms[4],
           mosfStatus: hupsAlarms[5],
-          hupsSOC,
+          hupsRes,
           ...thresholdAlarms,
           // Set timestamp to IST
-          timestamp: packetTimestamp
+          timestamp: packetTimestamp,
         });
 
+        console.log("Reading: ", reading.fireAlarm);
 
         // console.log("Fan1Status: ", reading.fan1Status)
         // console.log("Fan2Status: ", reading.fan2Status)
@@ -2256,21 +2521,21 @@ const server = net.createServer((socket) => {
             await SensorReading.insertMany(toSave);
 
             // Update deviceStatus only after successful save
-            const uniqueMacs = [...new Set(toSave.map(r => r.ip))];
+            const uniqueMacs = [...new Set(toSave.map((r) => r.ip))];
 
-            await Promise.all(
-              uniqueMacs.map(ip => updateDeviceStatus(ip))
-            );
-
+            await Promise.all(uniqueMacs.map((ip) => updateDeviceStatus(ip)));
           } catch (err) {
             console.error("Immediate bulk save failed:", err);
 
-            logger.error({
-              error: err.message,
-              stack: err.stack,
-              operation: "immediate bulk save",
-              records: toSave.length
-            }, "Immediate bulk save failed");
+            logger.error(
+              {
+                error: err.message,
+                stack: err.stack,
+                operation: "immediate bulk save",
+                records: toSave.length,
+              },
+              "Immediate bulk save failed",
+            );
           }
         }
         // setImmediate(async () => {
@@ -2288,13 +2553,16 @@ const server = net.createServer((socket) => {
     } catch (err) {
       console.error("Packet parsing failed:", err);
 
-      logger.error({
-        error: err.message,
-        stack: err.stack,
-        clientInfo,
-        packetCount,
-        bufferLength: socket.buffer?.length
-      }, "Packet parsing failed");
+      logger.error(
+        {
+          error: err.message,
+          stack: err.stack,
+          clientInfo,
+          packetCount,
+          bufferLength: socket.buffer?.length,
+        },
+        "Packet parsing failed",
+      );
 
       socket.destroy();
     }
@@ -2313,16 +2581,18 @@ const server = net.createServer((socket) => {
     if (err.code !== "ECONNRESET") {
       console.error("Socket error:", err);
 
-      logger.error({
-        error: err.message,
-        stack: err.stack,
-        code: err.code,
-        clientInfo,
-        deviceId: socket.deviceId
-      }, "Socket error");
+      logger.error(
+        {
+          error: err.message,
+          stack: err.stack,
+          code: err.code,
+          clientInfo,
+          deviceId: socket.deviceId,
+        },
+        "Socket error",
+      );
     }
   });
-
 
   // setInterval(() => {
   //   if (readingBuffer.length > 0) {
@@ -2339,7 +2609,6 @@ const server = net.createServer((socket) => {
   //       );
   //   }
   // }, 5000);
-
 });
 
 server.listen(4000, "0.0.0.0", () => {
@@ -2361,5 +2630,3 @@ app.listen(5000, "0.0.0.0", () => {
 //     console.error("❌ Bulk insert failed:", err.message);
 //   }
 // }, 200); // flush every 200ms
-
-
